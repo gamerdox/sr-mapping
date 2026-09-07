@@ -1,0 +1,9 @@
+﻿services:
+  sentinel-sr-studio:
+    build: .
+    container_name: sentinel_sr_studio
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1

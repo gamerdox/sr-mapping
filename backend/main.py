@@ -124,6 +124,42 @@ def create_difference_heatmap(sr_np: np.ndarray, bic_np: np.ndarray) -> str:
     return pil_to_base64(heatmap_img)
 
 
+def compute_ndvi_heatmap(img_rgb: np.ndarray) -> str:
+    """
+    Computes Normalized Difference Vegetation Index (NDVI / VARI proxy) from RGB:
+    VARI = (G - R) / (G + R - B + 1e-5)
+    Mapped through RdYlGn colormap (Red=bare earth/water, Green=dense canopy).
+    """
+    arr = img_rgb.astype(float) / 255.0
+    r = arr[:, :, 0]
+    g = arr[:, :, 1]
+    b = arr[:, :, 2]
+    vari = (g - r) / (g + r - b + 1e-5)
+    norm_vari = np.clip((vari + 0.3) / 0.8, 0.0, 1.0)
+    cmap = plt.get_cmap("RdYlGn")
+    ndvi_rgba = cmap(norm_vari)
+    ndvi_img = Image.fromarray((ndvi_rgba[:, :, :3] * 255.0).astype(np.uint8))
+    return pil_to_base64(ndvi_img)
+
+
+def compute_cir_composite(img_rgb: np.ndarray) -> str:
+    """
+    Simulates Color Infrared (CIR / False Color) satellite composite:
+    Standard CIR: NIR -> Red, Red -> Green, Green -> Blue.
+    Highlights vegetation in vivid crimson/red, urban surfaces in cyan, and water in dark navy.
+    """
+    arr = img_rgb.astype(float)
+    r = arr[:, :, 0]
+    g = arr[:, :, 1]
+    b = arr[:, :, 2]
+    nir_proxy = np.clip(1.35 * g - 0.25 * r + 0.1 * b, 0.0, 255.0)
+    cir_r = nir_proxy
+    cir_g = np.clip(0.9 * r + 0.1 * g, 0.0, 255.0)
+    cir_b = np.clip(0.8 * b + 0.2 * g, 0.0, 255.0)
+    cir_rgb = np.stack([cir_r, cir_g, cir_b], axis=-1).astype(np.uint8)
+    return pil_to_base64(Image.fromarray(cir_rgb))
+
+
 def deg2num(lat_deg: float, lon_deg: float, zoom: int) -> tuple[int, int]:
     lat_rad = math.radians(lat_deg)
     n = 2.0 ** zoom
@@ -312,12 +348,24 @@ def predict_sample(
     )
     target_np = np.array(target_pil)
 
+    # Quantitative Ground-Truth Metrics
+    psnr_bic = float(calculate_psnr(target_np, bic_np))
+    psnr_sr = float(calculate_psnr(target_np, sr_np))
+    ssim_bic = float(calculate_ssim(target_np, bic_np))
+    ssim_sr = float(calculate_ssim(target_np, sr_np))
+
     edge_bic = float(compute_edge_energy(bic_np))
     edge_sr = float(compute_edge_energy(sr_np))
     edge_hr = float(compute_edge_energy(target_np))
 
     b_shift = float(round(float(sr_np.astype(float).mean() - bic_np.astype(float).mean()), 2))
     heatmap_b64 = create_difference_heatmap(sr_np, bic_np)
+
+    # Spectral Remote-Sensing Composites
+    cir_sr_b64 = compute_cir_composite(sr_np)
+    cir_bic_b64 = compute_cir_composite(bic_np)
+    ndvi_sr_b64 = compute_ndvi_heatmap(sr_np)
+    ndvi_bic_b64 = compute_ndvi_heatmap(bic_np)
 
     return {
         "sample_id": int(sample_id),
@@ -336,6 +384,18 @@ def predict_sample(
             "target_hr": edge_hr,
             "sharpness_gain": float(round(edge_sr - edge_bic, 1)),
         },
+        "quantitative_metrics": {
+            "psnr": {
+                "bicubic_db": psnr_bic,
+                "model_sr_db": psnr_sr,
+                "gain_db": float(round(psnr_sr - psnr_bic, 2)),
+            },
+            "ssim": {
+                "bicubic": ssim_bic,
+                "model_sr": ssim_sr,
+                "gain": float(round(ssim_sr - ssim_bic, 4)),
+            },
+        },
         "photometric_preservation": {
             "brightness_shift": b_shift,
             "is_contrast_preserved": True,
@@ -346,6 +406,10 @@ def predict_sample(
             "sr_enhanced": pil_to_base64(sr_pil),
             "ground_truth_target": pil_to_base64(target_pil),
             "difference_heatmap": heatmap_b64,
+            "cir_bicubic": cir_bic_b64,
+            "cir_sr": cir_sr_b64,
+            "ndvi_bicubic": ndvi_bic_b64,
+            "ndvi_sr": ndvi_sr_b64,
         }
     }
 
@@ -385,6 +449,12 @@ def predict_from_coordinates(
     b_shift = float(round(float(sr_np.astype(float).mean() - bic_np.astype(float).mean()), 2))
     heatmap_b64 = create_difference_heatmap(sr_np, bic_np)
 
+    # Spectral Remote-Sensing Composites
+    cir_sr_b64 = compute_cir_composite(sr_np)
+    cir_bic_b64 = compute_cir_composite(bic_np)
+    ndvi_sr_b64 = compute_ndvi_heatmap(sr_np)
+    ndvi_bic_b64 = compute_ndvi_heatmap(bic_np)
+
     return {
         "source": f"Live Satellite: ({lat:.4f}, {lon:.4f})",
         "model": model_title,
@@ -401,6 +471,7 @@ def predict_from_coordinates(
             "model_sr": e_sr,
             "sharpness_gain": float(round(e_sr - e_bic, 1)),
         },
+        "quantitative_metrics": None,
         "photometric_preservation": {
             "brightness_shift": b_shift,
             "is_contrast_preserved": True,
@@ -410,6 +481,10 @@ def predict_from_coordinates(
             "bicubic": pil_to_base64(bicubic_pil),
             "sr_enhanced": pil_to_base64(sr_pil),
             "difference_heatmap": heatmap_b64,
+            "cir_bicubic": cir_bic_b64,
+            "cir_sr": cir_sr_b64,
+            "ndvi_bicubic": ndvi_bic_b64,
+            "ndvi_sr": ndvi_sr_b64,
         }
     }
 
@@ -437,6 +512,12 @@ async def predict_custom_image(
         b_shift = float(round(float(sr_np.astype(float).mean() - bic_np.astype(float).mean()), 2))
         heatmap_b64 = create_difference_heatmap(sr_np, bic_np)
 
+        # Spectral Remote-Sensing Composites
+        cir_sr_b64 = compute_cir_composite(sr_np)
+        cir_bic_b64 = compute_cir_composite(bic_np)
+        ndvi_sr_b64 = compute_ndvi_heatmap(sr_np)
+        ndvi_bic_b64 = compute_ndvi_heatmap(bic_np)
+
         return {
             "source": f"Uploaded File: {file.filename}",
             "model": model_title,
@@ -453,6 +534,7 @@ async def predict_custom_image(
                 "model_sr": e_sr,
                 "sharpness_gain": float(round(e_sr - e_bic, 1)),
             },
+            "quantitative_metrics": None,
             "photometric_preservation": {
                 "brightness_shift": b_shift,
                 "is_contrast_preserved": True,
@@ -462,6 +544,10 @@ async def predict_custom_image(
                 "bicubic": pil_to_base64(bicubic_pil),
                 "sr_enhanced": pil_to_base64(sr_pil),
                 "difference_heatmap": heatmap_b64,
+                "cir_bicubic": cir_bic_b64,
+                "cir_sr": cir_sr_b64,
+                "ndvi_bicubic": ndvi_bic_b64,
+                "ndvi_sr": ndvi_sr_b64,
             }
         }
 

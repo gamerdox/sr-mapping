@@ -1,6 +1,7 @@
 let currentData = null;
 let showingHeatmap = false;
 let loupeActive = false;
+let currentSpectralMode = 'rgb'; // 'rgb' | 'cir' | 'ndvi'
 let map;
 let clickMarker = null;
 
@@ -55,6 +56,90 @@ function onModelOrTTAChanged() {
     loadSample(activeSampleId);
   } else if (activeSourceType === 'upload' && activeUploadFile) {
     uploadExistingFile(activeUploadFile);
+  }
+}
+
+// Spectral Remote-Sensing Band Switcher
+function setSpectralMode(mode) {
+  currentSpectralMode = mode;
+  document.querySelectorAll('.spec-btn').forEach(b => b.classList.remove('active'));
+  if (mode === 'rgb') document.getElementById('btnSpecRGB').classList.add('active');
+  if (mode === 'cir') document.getElementById('btnSpecCIR').classList.add('active');
+  if (mode === 'ndvi') document.getElementById('btnSpecNDVI').classList.add('active');
+
+  updateActiveImages();
+}
+
+function updateActiveImages() {
+  if (!currentData || !currentData.images) return;
+
+  let leftSrc = currentData.images.bicubic;
+  let rightSrc = currentData.images.sr_enhanced;
+
+  if (currentSpectralMode === 'cir' && currentData.images.cir_sr) {
+    leftSrc = currentData.images.cir_bicubic;
+    rightSrc = currentData.images.cir_sr;
+  } else if (currentSpectralMode === 'ndvi' && currentData.images.ndvi_sr) {
+    leftSrc = currentData.images.ndvi_bicubic;
+    rightSrc = currentData.images.ndvi_sr;
+  }
+
+  if (showingHeatmap) {
+    rightSrc = currentData.images.difference_heatmap;
+  }
+
+  document.getElementById('sliderLeftImg').src = leftSrc;
+  document.getElementById('sliderRightImg').src = rightSrc;
+
+  const rightLabel = document.getElementById('rightLabel');
+  if (showingHeatmap) {
+    rightLabel.innerText = 'AI Difference Heatmap (Synthesized Edges) ▶';
+  } else {
+    const specTag = currentSpectralMode.toUpperCase();
+    rightLabel.innerText = `${currentData.model} (${specTag}) ▶`;
+  }
+}
+
+// Geocoding City Search
+function handleSearchKeyDown(e) {
+  if (e.key === 'Enter') {
+    executeCitySearch();
+  }
+}
+
+async function executeCitySearch() {
+  const input = document.getElementById('citySearchInput');
+  const query = input ? input.value.trim() : '';
+  if (!query) return;
+
+  showLoader(`Searching location "${query}" via OpenStreetMap...`);
+
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) throw new Error('Geocoding service unavailable.');
+    const data = await res.json();
+    if (!data || data.length === 0) {
+      alert(`Location "${query}" not found. Try another city name.`);
+      hideLoader();
+      return;
+    }
+
+    const lat = parseFloat(data[0].lat);
+    const lon = parseFloat(data[0].lon);
+    const displayName = data[0].display_name.split(',')[0];
+
+    map.flyTo([lat, lon], 16, { duration: 1.5 });
+    if (clickMarker) map.removeLayer(clickMarker);
+    clickMarker = L.marker([lat, lon]).addTo(map);
+    clickMarker.bindPopup(`<b>${displayName}</b><br>Fetching live satellite tile...`).openPopup();
+
+    activeLocationParams = { lat, lng: lon, zoom: 16, name: displayName };
+    await loadLiveLocation(lat, lon, 16);
+  } catch (err) {
+    console.error(err);
+    alert('Search error: ' + err.message);
+    hideLoader();
   }
 }
 
@@ -225,20 +310,15 @@ function toggleHeatmap() {
   if (!currentData) return;
   showingHeatmap = !showingHeatmap;
   const btn = document.getElementById('heatmapBtn');
-  const rightLabel = document.getElementById('rightLabel');
-  const rightImg = document.getElementById('sliderRightImg');
 
   if (showingHeatmap) {
-    rightImg.src = currentData.images.difference_heatmap;
     btn.classList.add('active');
     btn.innerText = 'View AI Enhanced Image';
-    rightLabel.innerText = 'AI Difference Heatmap (Synthesized Edges) ▶';
   } else {
-    rightImg.src = currentData.images.sr_enhanced;
     btn.classList.remove('active');
     btn.innerText = 'AI Difference Heatmap';
-    rightLabel.innerText = `${currentData.model} ▶`;
   }
+  updateActiveImages();
 }
 
 // 6. Load Dataset Sample
@@ -301,21 +381,13 @@ async function uploadExistingFile(file) {
 
 // 8. Render Data into UI
 function renderData(data) {
-  document.getElementById('sliderLeftImg').src = data.images.bicubic;
-  document.getElementById('sliderRightImg').src = showingHeatmap ? data.images.difference_heatmap : data.images.sr_enhanced;
+  updateActiveImages();
 
   document.getElementById('imgLR').src = data.images.lr;
   document.getElementById('imgBicubic').src = data.images.bicubic;
   document.getElementById('imgSR').src = data.images.sr_enhanced;
   if (data.images.ground_truth_target) {
     document.getElementById('imgTarget').src = data.images.ground_truth_target;
-  }
-
-  const rightLabel = document.getElementById('rightLabel');
-  if (showingHeatmap) {
-    rightLabel.innerText = 'AI Difference Heatmap (Synthesized Edges) ▶';
-  } else {
-    rightLabel.innerText = `${data.model} ▶`;
   }
 
   const cardSRTitle = document.getElementById('cardSRTitle');
@@ -327,6 +399,35 @@ function renderData(data) {
   document.getElementById('latencyStat').innerText = `${data.latency_ms} ms`;
   const gain = data.edge_sharpness.sharpness_gain;
   document.getElementById('edgeStat').innerText = `${gain >= 0 ? '+' : ''}${gain}`;
+
+  // Quantitative PSNR / SSIM Fidelity Display
+  const metricsStat = document.getElementById('metricsStat');
+  const bicubicMetricsTag = document.getElementById('bicubicMetricsTag');
+  const srMetricsTag = document.getElementById('srMetricsTag');
+  const targetMetricsTag = document.getElementById('targetMetricsTag');
+
+  if (data.quantitative_metrics) {
+    const p = data.quantitative_metrics.psnr;
+    const s = data.quantitative_metrics.ssim;
+    if (metricsStat) metricsStat.innerText = `${p.model_sr_db.toFixed(1)} dB / SSIM: ${s.model_sr.toFixed(3)}`;
+    if (bicubicMetricsTag) {
+      bicubicMetricsTag.innerText = `PSNR: ${p.bicubic_db.toFixed(1)} dB`;
+      bicubicMetricsTag.style.display = 'inline-block';
+    }
+    if (srMetricsTag) {
+      srMetricsTag.innerText = `PSNR: ${p.model_sr_db.toFixed(1)} dB (${p.gain_db >= 0 ? '+' : ''}${p.gain_db.toFixed(2)} dB)`;
+      srMetricsTag.style.display = 'inline-block';
+    }
+    if (targetMetricsTag) {
+      targetMetricsTag.innerText = `SSIM: ${s.model_sr.toFixed(3)}`;
+      targetMetricsTag.style.display = 'inline-block';
+    }
+  } else {
+    if (metricsStat) metricsStat.innerText = '-- (Live Coordinates)';
+    if (bicubicMetricsTag) bicubicMetricsTag.style.display = 'none';
+    if (srMetricsTag) srMetricsTag.style.display = 'none';
+    if (targetMetricsTag) targetMetricsTag.style.display = 'none';
+  }
 
   document.getElementById('lrDimTag').innerText = `${data.input_dimensions}`;
   document.getElementById('bicubicTag').innerText = `Edge: ${data.edge_sharpness.bicubic}`;

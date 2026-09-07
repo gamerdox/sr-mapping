@@ -454,4 +454,83 @@ button.active {
   to { transform: rotate(360deg); }
 }
 
+/* Geocoding Map Search Bar */
+.map-search-bar {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  margin-bottom: 8px;
+}
+
+.map-search-bar input {
+  flex: 1;
+  background: #0f172a;
+  border: 1px solid var(--card-border);
+  color: #fff;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.map-search-bar input:focus {
+  border-color: var(--accent);
+}
+
+.btn-search {
+  background: #0284c7;
+  color: #fff;
+  border: none;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.btn-search:hover {
+  background: #0369a1;
+}
+
+/* Spectral Mode Button Group */
+.spectral-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0 12px 0;
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+}
+
+.spec-btn {
+  background: #1e293b;
+  border: 1px solid var(--card-border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.spec-btn:hover {
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.spec-btn.active {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+
 

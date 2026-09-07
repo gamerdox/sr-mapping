@@ -32,6 +32,10 @@
           <div class="stat-val" id="edgeStat" style="color: var(--success);">0.00 (Zero Tint)</div>
         </div>
         <div class="stat-box">
+          <div class="stat-label">Fidelity (PSNR / SSIM)</div>
+          <div class="stat-val" id="metricsStat" style="font-size: 16px; color: #c084fc;">-- (Live Coordinates)</div>
+        </div>
+        <div class="stat-box">
           <div class="stat-label">CPU Inference Latency</div>
           <div class="stat-val" id="latencyStat">~18 ms</div>
         </div>
@@ -44,11 +48,17 @@
       <div class="panel">
         <div class="panel-title">
           <span>1. Global Satellite Explorer</span>
-          <span class="tag" style="background: #0284c7; color: #fff;">Click Anywhere on Earth!</span>
+          <span class="tag" style="background: #0284c7; color: #fff;">Click or Search Any Location</span>
         </div>
         <p class="subtitle" style="font-size: 12px; margin-top: 2px;">
-          Pan, zoom, or <b>click anywhere on the world map</b> to fetch satellite imagery and super-resolve it in the Studio:
+          Type any city name below or <b>click anywhere on the world map</b> to fetch satellite imagery:
         </p>
+
+        <!-- Geocoding City Search Bar -->
+        <div class="map-search-bar">
+          <input type="text" id="citySearchInput" placeholder="🔍 Search city, landmark (e.g. Tokyo, London, Mt Fuji, Rome)..." onkeydown="handleSearchKeyDown(event)">
+          <button class="btn-search" onclick="executeCitySearch()">Fly & Enhance</button>
+        </div>
         
         <!-- Preset Landmark Quick Buttons -->
         <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;">
@@ -93,6 +103,15 @@
             </label>
           </div>
         </div>
+
+        <!-- Spectral Remote-Sensing Mode Bar -->
+        <div class="spectral-bar">
+          <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-right: 2px;">Spectral Band:</span>
+          <button id="btnSpecRGB" class="spec-btn active" onclick="setSpectralMode('rgb')">🌿 Natural RGB</button>
+          <button id="btnSpecCIR" class="spec-btn" onclick="setSpectralMode('cir')">🔴 False-Color CIR (Infrared)</button>
+          <button id="btnSpecNDVI" class="spec-btn" onclick="setSpectralMode('ndvi')">🌱 NDVI Greenness Index</button>
+        </div>
+
         <div id="edsrWarning" class="alert-banner" style="display: none;">
           🔬 <b>EDSR Deep Residual Architecture:</b> 16 residual blocks (~43M parameters) for maximum edge fidelity (~3.3s on CPU).
         </div>
@@ -154,7 +173,10 @@
       <div class="card">
         <div class="card-header">
           <span>2. Bicubic Baseline (2x)</span>
-          <span class="tag" id="bicubicTag">256×256 (65k px)</span>
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <span class="tag" id="bicubicMetricsTag" style="display: none; font-size: 10px; background: #334155; color: #94a3b8;">PSNR: --</span>
+            <span class="tag" id="bicubicTag">256×256 (65k px)</span>
+          </div>
         </div>
         <div class="card-body">
           <img id="imgBicubic" src="" alt="Bicubic" style="width: 256px; height: 256px;">
@@ -164,7 +186,10 @@
       <div class="card" style="border-color: var(--accent);">
         <div class="card-header" style="background: rgba(56, 189, 248, 0.1);">
           <span id="cardSRTitle" style="color: var(--accent);">3. FSRCNN Pretrained (AI 2x)</span>
-          <span class="tag tag-success" id="srTag">256×256 (65k px)</span>
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <span class="tag" id="srMetricsTag" style="display: none; font-size: 10px; background: #581c87; color: #d8b4fe;">PSNR: --</span>
+            <span class="tag tag-success" id="srTag">256×256 (65k px)</span>
+          </div>
         </div>
         <div class="card-body">
           <img id="imgSR" src="" alt="SR" style="width: 256px; height: 256px;">
@@ -174,7 +199,10 @@
       <div class="card" id="targetCard">
         <div class="card-header">
           <span>4. Reference Ground Truth</span>
-          <span class="tag" id="targetTag">256×256 (65k px)</span>
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <span class="tag" id="targetMetricsTag" style="display: none; font-size: 10px; background: #14532d; color: #86efac;">SSIM: --</span>
+            <span class="tag" id="targetTag">256×256 (65k px)</span>
+          </div>
         </div>
         <div class="card-body">
           <img id="imgTarget" src="" alt="Target" style="width: 256px; height: 256px;">
