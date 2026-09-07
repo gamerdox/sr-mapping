@@ -94,7 +94,11 @@
           </div>
         </div>
         <div id="edsrWarning" class="alert-banner" style="display: none;">
-          ⚠️ <b>Deep Architecture Notice:</b> EDSR runs 16 residual blocks on CPU (~3s per tile, or ~24s with 8x TTA). Please wait for inference to complete.
+          🔬 <b>EDSR Deep Residual Architecture:</b> 16 residual blocks (~43M parameters) for maximum edge fidelity (~3.3s on CPU).
+        </div>
+        <div id="studioLoader" class="studio-loader" style="display: none;">
+          <span class="spinner"></span>
+          <span id="studioLoaderText">Running super-resolution on CPU...</span>
         </div>
 
         <!-- Split Slider -->

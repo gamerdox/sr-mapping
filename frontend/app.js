@@ -58,6 +58,27 @@ function onModelOrTTAChanged() {
   }
 }
 
+function showLoader(msg) {
+  const sLoader = document.getElementById('studioLoader');
+  const sText = document.getElementById('studioLoaderText');
+  const bLoader = document.getElementById('loader');
+  if (sLoader && sText) {
+    sText.innerText = msg;
+    sLoader.style.display = 'flex';
+  }
+  if (bLoader) {
+    bLoader.innerText = msg;
+    bLoader.style.display = 'block';
+  }
+}
+
+function hideLoader() {
+  const sLoader = document.getElementById('studioLoader');
+  const bLoader = document.getElementById('loader');
+  if (sLoader) sLoader.style.display = 'none';
+  if (bLoader) bLoader.style.display = 'none';
+}
+
 // 1. Initialize Leaflet World Satellite Map
 function initMap() {
   const defaultCoords = [-2.609, -60.209]; // Manaus, Brazil
@@ -97,8 +118,7 @@ async function loadLiveLocation(lat, lng, zoom = 15) {
   activeLocationParams = { lat, lng, zoom };
   const { model, tta } = getModelParams();
 
-  document.getElementById('loader').style.display = 'block';
-  document.getElementById('loader').innerText = `Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on Lat: ${lat.toFixed(4)}, Lon: ${lng.toFixed(4)}...`;
+  showLoader(`Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on Lat: ${lat.toFixed(4)}, Lon: ${lng.toFixed(4)}...`);
   document.querySelectorAll('#sampleButtons button').forEach(b => b.classList.remove('active'));
 
   try {
@@ -120,7 +140,7 @@ async function loadLiveLocation(lat, lng, zoom = 15) {
     console.error(err);
     alert('Error super-resolving location: ' + err.message);
   } finally {
-    document.getElementById('loader').style.display = 'none';
+    hideLoader();
   }
 }
 
@@ -230,8 +250,7 @@ async function loadSample(id) {
   document.querySelectorAll('#sampleButtons button').forEach((b, idx) => {
     b.classList.toggle('active', idx === id);
   });
-  document.getElementById('loader').style.display = 'block';
-  document.getElementById('loader').innerText = `Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on Sample ${id}...`;
+  showLoader(`Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on Sample ${id}...`);
   document.getElementById('targetCard').style.display = 'flex';
   document.getElementById('activeSourceTag').innerText = `SEN2VENµS Sample ${id} (Manaus, Brazil)`;
 
@@ -243,7 +262,7 @@ async function loadSample(id) {
     console.error(err);
     alert('Failed to load sample: ' + err.message);
   } finally {
-    document.getElementById('loader').style.display = 'none';
+    hideLoader();
   }
 }
 
@@ -261,8 +280,7 @@ async function uploadExistingFile(file) {
   formData.append('file', file);
 
   document.querySelectorAll('#sampleButtons button').forEach(b => b.classList.remove('active'));
-  document.getElementById('loader').style.display = 'block';
-  document.getElementById('loader').innerText = `Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on ${file.name}...`;
+  showLoader(`Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on ${file.name}...`);
   document.getElementById('activeSourceTag').innerText = `Uploaded: ${file.name}`;
 
   try {
@@ -277,7 +295,7 @@ async function uploadExistingFile(file) {
     console.error(err);
     alert('Upload failed: ' + err.message);
   } finally {
-    document.getElementById('loader').style.display = 'none';
+    hideLoader();
   }
 }
 
