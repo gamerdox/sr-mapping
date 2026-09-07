@@ -1,0 +1,30 @@
+﻿# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.ipynb_checkpoints
+
+# Large dataset archives and raw tensors
+data/sen2venus_sample/*.7z
+data/sen2venus_sample/FGMANAUS/
+*.pt
+
+# Keep demo patches for quick testing
+!data/sen2venus_sample/demo_patches/
+
+# Large model files > 50MB (GitHub 100MB limit)
+checkpoints/*.pb
+!checkpoints/FSRCNN_x2.pb
+!checkpoints/ESPCN_x2.pb
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

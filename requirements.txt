@@ -1,0 +1,20 @@
+﻿# PyTorch (CPU) & Computer Vision
+torch>=2.2.0
+torchvision>=0.17.0
+
+# Backend & Serving
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+python-multipart>=0.0.9
+pydantic>=2.6.0
+
+# Image & Scientific Computing
+numpy>=1.26.0
+pillow>=10.2.0
+scikit-image>=0.22.0
+matplotlib>=3.8.0
+
+# Utilities
+requests>=2.31.0
+tqdm>=4.66.0
+py7zr>=0.20.0
