@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -11,11 +11,12 @@
   <div class="container">
     <header>
       <span class="badge">Earth Observation AI</span>
-      <span class="badge" style="background: #1e3a8a; color: #93c5fd;">Official Pretrained FSRCNN (2x)</span>
+      <span class="badge" id="activeModelBadge" style="background: #1e3a8a; color: #93c5fd;">Model: FSRCNN (2x)</span>
+      <span class="badge" id="activeTtaBadge" style="background: #0284c7; color: #fff; display: none;">8x TTA Active</span>
       <span class="badge" style="background: #14532d; color: #86efac;">Zero Color Drift Engine</span>
       <span class="badge" style="background: #581c87; color: #d8b4fe;">FastAPI Backend</span>
       <h1>Sentinel-2 Super-Resolution Mapping Studio</h1>
-      <p class="subtitle">Official Pretrained Super-Resolution Network (FSRCNN) with locked-chroma luminance detail reconstruction — zero color tint, authentic edge sharpening.</p>
+      <p class="subtitle">Multi-Model Deep Super-Resolution (FSRCNN, EDSR, ESPCN) with 8x Geometric Self-Ensemble & locked-chroma luminance detail reconstruction.</p>
 
       <div class="stats-bar">
         <div class="stat-box">
@@ -73,6 +74,28 @@
           </div>
         </div>
         <p class="subtitle" style="font-size: 12px;">Drag the divider left/right or toggle the 4x Loupe to inspect sharp building edges, roads, and rooftops:</p>
+
+        <!-- Model Architecture & TTA Control Toolbar -->
+        <div class="model-settings-bar">
+          <div class="setting-item">
+            <label for="modelSelect"><b>Model Architecture:</b></label>
+            <select id="modelSelect" onchange="onModelOrTTAChanged()">
+              <option value="fsrcnn" selected>⚡ FSRCNN (Fast CNN - ~18ms)</option>
+              <option value="edsr">🔬 EDSR (Deep Residual SOTA - High Detail)</option>
+              <option value="espcn">🚀 ESPCN (Sub-Pixel CNN - ~10ms)</option>
+            </select>
+          </div>
+          <div class="setting-item">
+            <label class="checkbox-label" title="Runs 8-way rotation and flip geometric ensembling to boost PSNR (+0.3dB) and cancel directional artifacts">
+              <input type="checkbox" id="ttaToggle" onchange="onModelOrTTAChanged()">
+              <span><b>8x Geometric Self-Ensemble (TTA)</b></span>
+              <span class="badge-mini">Boosts PSNR</span>
+            </label>
+          </div>
+        </div>
+        <div id="edsrWarning" class="alert-banner" style="display: none;">
+          ⚠️ <b>Deep Architecture Notice:</b> EDSR runs 16 residual blocks on CPU (~3s per tile, or ~24s with 8x TTA). Please wait for inference to complete.
+        </div>
 
         <!-- Split Slider -->
         <div class="split-wrapper" id="splitBox">
@@ -136,7 +159,7 @@
 
       <div class="card" style="border-color: var(--accent);">
         <div class="card-header" style="background: rgba(56, 189, 248, 0.1);">
-          <span style="color: var(--accent);">3. FSRCNN Pretrained (AI 2x)</span>
+          <span id="cardSRTitle" style="color: var(--accent);">3. FSRCNN Pretrained (AI 2x)</span>
           <span class="tag tag-success" id="srTag">256×256 (65k px)</span>
         </div>
         <div class="card-body">

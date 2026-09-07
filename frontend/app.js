@@ -1,8 +1,62 @@
-﻿let currentData = null;
+let currentData = null;
 let showingHeatmap = false;
 let loupeActive = false;
 let map;
 let clickMarker = null;
+
+// Active state tracking to enable instant re-running when model or TTA changes
+let activeSourceType = 'location'; // 'location' | 'sample' | 'upload'
+let activeLocationParams = { lat: 48.8584, lng: 2.2945, zoom: 16, name: 'Eiffel Tower (Paris, France)' };
+let activeSampleId = null;
+let activeUploadFile = null;
+
+function getModelParams() {
+  const modelSelect = document.getElementById('modelSelect');
+  const ttaToggle = document.getElementById('ttaToggle');
+  const model = modelSelect ? modelSelect.value : 'fsrcnn';
+  const tta = ttaToggle ? ttaToggle.checked : false;
+  return { model, tta };
+}
+
+function onModelOrTTAChanged() {
+  const { model, tta } = getModelParams();
+
+  // Update header badges
+  const modelBadge = document.getElementById('activeModelBadge');
+  if (modelBadge) {
+    modelBadge.innerText = `Model: ${model.toUpperCase()} (2x)`;
+    if (model === 'edsr') {
+      modelBadge.style.background = '#7c2d12';
+      modelBadge.style.color = '#fdba74';
+    } else if (model === 'espcn') {
+      modelBadge.style.background = '#065f46';
+      modelBadge.style.color = '#6ee7b7';
+    } else {
+      modelBadge.style.background = '#1e3a8a';
+      modelBadge.style.color = '#93c5fd';
+    }
+  }
+
+  const ttaBadge = document.getElementById('activeTtaBadge');
+  if (ttaBadge) {
+    ttaBadge.style.display = tta ? 'inline-block' : 'none';
+  }
+
+  // Show warning banner if deep EDSR is selected
+  const edsrWarning = document.getElementById('edsrWarning');
+  if (edsrWarning) {
+    edsrWarning.style.display = (model === 'edsr') ? 'block' : 'none';
+  }
+
+  // Re-run active view with newly selected model/TTA configuration
+  if (activeSourceType === 'location' && activeLocationParams) {
+    loadLiveLocation(activeLocationParams.lat, activeLocationParams.lng, activeLocationParams.zoom);
+  } else if (activeSourceType === 'sample' && activeSampleId !== null) {
+    loadSample(activeSampleId);
+  } else if (activeSourceType === 'upload' && activeUploadFile) {
+    uploadExistingFile(activeUploadFile);
+  }
+}
 
 // 1. Initialize Leaflet World Satellite Map
 function initMap() {
@@ -22,11 +76,11 @@ function initMap() {
   map.on('click', async (e) => {
     const { lat, lng } = e.latlng;
     const zoom = Math.max(14, map.getZoom());
-    
+
     if (clickMarker) {
       map.removeLayer(clickMarker);
     }
-    
+
     clickMarker = L.marker([lat, lng], {
       title: "Selected Location"
     }).addTo(map);
@@ -39,12 +93,16 @@ function initMap() {
 
 // 2. Fetch & Super-Resolve from Live Coordinates
 async function loadLiveLocation(lat, lng, zoom = 15) {
+  activeSourceType = 'location';
+  activeLocationParams = { lat, lng, zoom };
+  const { model, tta } = getModelParams();
+
   document.getElementById('loader').style.display = 'block';
-  document.getElementById('loader').innerText = `Fetching live satellite imagery for Lat: ${lat.toFixed(4)}, Lon: ${lng.toFixed(4)}...`;
+  document.getElementById('loader').innerText = `Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on Lat: ${lat.toFixed(4)}, Lon: ${lng.toFixed(4)}...`;
   document.querySelectorAll('#sampleButtons button').forEach(b => b.classList.remove('active'));
 
   try {
-    const res = await fetch(`/api/sr/predict-location?lat=${lat}&lon=${lng}&zoom=${zoom}`, {
+    const res = await fetch(`/api/sr/predict-location?lat=${lat}&lon=${lng}&zoom=${zoom}&model=${model}&tta=${tta}`, {
       method: 'POST'
     });
     if (!res.ok) {
@@ -56,7 +114,7 @@ async function loadLiveLocation(lat, lng, zoom = 15) {
     renderData(currentData);
 
     if (clickMarker) {
-      clickMarker.bindPopup(`<b>Enhanced in Studio:</b><br>${currentData.source}<br>Resolution: ${currentData.input_dimensions} &rarr; ${currentData.output_dimensions}`).openPopup();
+      clickMarker.bindPopup(`<b>Enhanced in Studio:</b><br>${currentData.source}<br>Model: ${currentData.model}<br>Resolution: ${currentData.input_dimensions} &rarr; ${currentData.output_dimensions}`).openPopup();
     }
   } catch (err) {
     console.error(err);
@@ -71,6 +129,7 @@ function jumpToLandmark(lat, lng, zoom, name) {
   if (clickMarker) map.removeLayer(clickMarker);
   clickMarker = L.marker([lat, lng]).addTo(map);
   clickMarker.bindPopup(`<b>${name}</b><br>Super-resolving...`).openPopup();
+  activeLocationParams = { lat, lng, zoom, name };
   loadLiveLocation(lat, lng, zoom);
 }
 
@@ -158,22 +217,26 @@ function toggleHeatmap() {
     rightImg.src = currentData.images.sr_enhanced;
     btn.classList.remove('active');
     btn.innerText = 'AI Difference Heatmap';
-    rightLabel.innerText = 'FSRCNN Pretrained AI (Crisp 2x) ▶';
+    rightLabel.innerText = `${currentData.model} ▶`;
   }
 }
 
 // 6. Load Dataset Sample
 async function loadSample(id) {
+  activeSourceType = 'sample';
+  activeSampleId = id;
+  const { model, tta } = getModelParams();
+
   document.querySelectorAll('#sampleButtons button').forEach((b, idx) => {
     b.classList.toggle('active', idx === id);
   });
   document.getElementById('loader').style.display = 'block';
-  document.getElementById('loader').innerText = 'Loading dataset sample patch...';
+  document.getElementById('loader').innerText = `Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on Sample ${id}...`;
   document.getElementById('targetCard').style.display = 'flex';
   document.getElementById('activeSourceTag').innerText = `SEN2VENµS Sample ${id} (Manaus, Brazil)`;
 
   try {
-    const res = await fetch(`/api/sr/predict-sample/${id}`, { method: 'POST' });
+    const res = await fetch(`/api/sr/predict-sample/${id}?model=${model}&tta=${tta}`, { method: 'POST' });
     currentData = await res.json();
     renderData(currentData);
   } catch (err) {
@@ -187,17 +250,23 @@ async function loadSample(id) {
 // 7. Handle Custom Image Upload
 async function handleCustomUpload(input) {
   if (!input.files || !input.files[0]) return;
-  const file = input.files[0];
+  activeUploadFile = input.files[0];
+  activeSourceType = 'upload';
+  await uploadExistingFile(activeUploadFile);
+}
+
+async function uploadExistingFile(file) {
+  const { model, tta } = getModelParams();
   const formData = new FormData();
   formData.append('file', file);
 
   document.querySelectorAll('#sampleButtons button').forEach(b => b.classList.remove('active'));
   document.getElementById('loader').style.display = 'block';
-  document.getElementById('loader').innerText = 'Running official pretrained 2x super-resolution...';
+  document.getElementById('loader').innerText = `Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on ${file.name}...`;
   document.getElementById('activeSourceTag').innerText = `Uploaded: ${file.name}`;
 
   try {
-    const res = await fetch('/api/sr/predict?return_base64=true', {
+    const res = await fetch(`/api/sr/predict?return_base64=true&model=${model}&tta=${tta}`, {
       method: 'POST',
       body: formData
     });
@@ -224,6 +293,18 @@ function renderData(data) {
     document.getElementById('imgTarget').src = data.images.ground_truth_target;
   }
 
+  const rightLabel = document.getElementById('rightLabel');
+  if (showingHeatmap) {
+    rightLabel.innerText = 'AI Difference Heatmap (Synthesized Edges) ▶';
+  } else {
+    rightLabel.innerText = `${data.model} ▶`;
+  }
+
+  const cardSRTitle = document.getElementById('cardSRTitle');
+  if (cardSRTitle) {
+    cardSRTitle.innerText = `3. ${data.model}`;
+  }
+
   document.getElementById('pixelsStat').innerText = `${data.pixel_count_input.toLocaleString()} → ${data.pixel_count_output.toLocaleString()} (4×)`;
   document.getElementById('latencyStat').innerText = `${data.latency_ms} ms`;
   const gain = data.edge_sharpness.sharpness_gain;
@@ -248,3 +329,4 @@ window.addEventListener('DOMContentLoaded', () => {
   initMap();
   jumpToLandmark(48.8584, 2.2945, 16, 'Eiffel Tower (Paris, France)');
 });
+

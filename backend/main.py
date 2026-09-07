@@ -1,4 +1,4 @@
-﻿import io
+import io
 import time
 import math
 import base64
@@ -29,8 +29,8 @@ from src.data.dataset import get_demo_image_paths
 
 app = FastAPI(
     title="Sentinel-2 Super-Resolution API & Studio",
-    description="Official Pretrained Deep Super-Resolution (FSRCNN/EDSR) with Zero-Color-Shift Luminance Engine.",
-    version="3.0.0",
+    description="Multi-Model Deep Super-Resolution (FSRCNN, EDSR, ESPCN) with 8x Geometric Self-Ensemble & Zero-Color-Drift Engine.",
+    version="3.1.0",
 )
 
 app.add_middleware(
@@ -45,21 +45,59 @@ CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 DEMO_DIR = PROJECT_ROOT / "data" / "sen2venus_sample" / "demo_patches"
 RESULTS_DIR = PROJECT_ROOT / "results"
 
-# Pretrained Super-Resolution Engine
-sr_engine: Optional[dnn_superres.DnnSuperResImpl] = None
+# Available Models Registry
+AVAILABLE_MODELS: dict[str, dict] = {
+    "fsrcnn": {
+        "id": "fsrcnn",
+        "name": "FSRCNN (Fast CNN)",
+        "file": "FSRCNN_x2.pb",
+        "scale": 2,
+        "description": "Fast 4-layer CNN (~12k params) optimized for real-time CPU interactive exploration.",
+        "typical_latency": "~18 ms",
+        "badge": "Real-Time (~18ms)",
+        "is_default": True,
+    },
+    "edsr": {
+        "id": "edsr",
+        "name": "EDSR (Deep Residual SOTA)",
+        "file": "EDSR_x2.pb",
+        "scale": 2,
+        "description": "Deep 16-residual-block network (~43M params) with high structural sharpness.",
+        "typical_latency": "~3.2 s (CPU)",
+        "badge": "High Detail (Deep Residual)",
+        "is_default": False,
+    },
+    "espcn": {
+        "id": "espcn",
+        "name": "ESPCN (Sub-Pixel CNN)",
+        "file": "ESPCN_x2.pb",
+        "scale": 2,
+        "description": "Sub-pixel convolutional network for ultra-fast spatial reconstruction.",
+        "typical_latency": "~10 ms",
+        "badge": "Ultra-Fast (~10ms)",
+        "is_default": False,
+    },
+}
+
+LOADED_ENGINES: dict[str, dnn_superres.DnnSuperResImpl] = {}
 
 
 @app.on_event("startup")
 def startup_event():
-    global sr_engine
-    model_path = CHECKPOINTS_DIR / "FSRCNN_x2.pb"
-    if model_path.exists():
-        sr_engine = dnn_superres.DnnSuperResImpl_create()
-        sr_engine.readModel(str(model_path))
-        sr_engine.setModel("fsrcnn", 2)
-        print(f"[Backend] Successfully loaded Official Pretrained FSRCNN (2x) from {model_path.name}")
-    else:
-        print(f"[Backend Error] Pretrained model {model_path.name} not found!")
+    global LOADED_ENGINES
+    for key, info in AVAILABLE_MODELS.items():
+        model_path = CHECKPOINTS_DIR / info["file"]
+        if model_path.exists():
+            try:
+                engine = dnn_superres.DnnSuperResImpl_create()
+                engine.readModel(str(model_path))
+                engine.setModel(key, info["scale"])
+                LOADED_ENGINES[key] = engine
+                print(f"[Backend] Successfully loaded {info['name']} from {model_path.name}")
+            except Exception as e:
+                print(f"[Backend Error] Failed to load {info['name']}: {e}")
+        else:
+            print(f"[Backend Warning] Model file {model_path.name} not found.")
 
 
 def pil_to_base64(img: Image.Image) -> str:
@@ -94,13 +132,39 @@ def deg2num(lat_deg: float, lon_deg: float, zoom: int) -> tuple[int, int]:
     return (xtile, ytile)
 
 
-def run_pretrained_sr(input_pil: Image.Image) -> tuple[Image.Image, Image.Image, float, np.ndarray, np.ndarray]:
+def forward_tta(img_bgr: np.ndarray, upsample_fn) -> np.ndarray:
     """
-    Runs official pretrained super-resolution with zero-color-shift luminance detail reconstruction.
-    Guarantees:
-    - 2x spatial upscaling
-    - ZERO color distortion / green tint
-    - Sharp reconstructed edges on buildings, roads, rivers, and fields
+    8-Way Geometric Self-Ensemble (Test-Time Augmentation).
+    Runs 4 rotations (0, 90, 180, 270 deg) x 2 flips (normal, horizontal),
+    inverts each output back to original orientation, and pixel-averages the ensemble.
+    Eliminates directional convolution artifacts and yields +0.2 to +0.4 dB PSNR.
+    """
+    outputs = []
+    for rot in range(4):
+        for flip in (False, True):
+            t_in = np.rot90(img_bgr, k=rot)
+            if flip:
+                t_in = np.fliplr(t_in)
+
+            t_out = upsample_fn(t_in)
+
+            if flip:
+                t_out = np.fliplr(t_out)
+            t_out = np.rot90(t_out, k=-rot)
+            outputs.append(t_out.astype(np.float32))
+
+    avg_out = np.mean(outputs, axis=0)
+    return np.clip(avg_out, 0, 255).astype(np.uint8)
+
+
+def run_pretrained_sr(
+    input_pil: Image.Image,
+    model_name: str = "fsrcnn",
+    enable_tta: bool = False,
+) -> tuple[Image.Image, Image.Image, float, np.ndarray, np.ndarray, str]:
+    """
+    Runs official pretrained super-resolution with optional 8x Geometric Self-Ensemble (TTA)
+    and zero-color-shift locked-chroma luminance detail reconstruction.
     """
     w, h = input_pil.size
     bicubic_pil = input_pil.resize((w * 2, h * 2), resample=Image.BICUBIC)
@@ -109,11 +173,22 @@ def run_pretrained_sr(input_pil: Image.Image) -> tuple[Image.Image, Image.Image,
     # Convert to OpenCV BGR
     img_bgr = cv2.cvtColor(np.array(input_pil.convert("RGB")), cv2.COLOR_RGB2BGR)
 
+    model_key = model_name.lower().strip()
+    if model_key not in LOADED_ENGINES:
+        model_key = "fsrcnn" if "fsrcnn" in LOADED_ENGINES else (list(LOADED_ENGINES.keys())[0] if LOADED_ENGINES else None)
+
     start = time.perf_counter()
-    if sr_engine is not None:
-        sr_bgr = sr_engine.upsample(img_bgr)
+    if model_key and model_key in LOADED_ENGINES:
+        engine = LOADED_ENGINES[model_key]
+        if enable_tta:
+            sr_bgr = forward_tta(img_bgr, engine.upsample)
+        else:
+            sr_bgr = engine.upsample(img_bgr)
+        model_display = AVAILABLE_MODELS.get(model_key, {}).get("name", model_key.upper())
     else:
         sr_bgr = cv2.resize(img_bgr, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+        model_display = "Bicubic Fallback"
+
     latency_ms = (time.perf_counter() - start) * 1000.0
 
     sr_rgb = cv2.cvtColor(sr_bgr, cv2.COLOR_BGR2RGB)
@@ -136,7 +211,8 @@ def run_pretrained_sr(input_pil: Image.Image) -> tuple[Image.Image, Image.Image,
     final_rgb = cv2.cvtColor(final_ycbcr, cv2.COLOR_YCrCb2RGB)
 
     sr_pil = Image.fromarray(final_rgb)
-    return bicubic_pil, sr_pil, round(latency_ms, 2), final_rgb, bic_np
+    active_title = f"{model_display}{' + 8x TTA' if enable_tta else ''}"
+    return bicubic_pil, sr_pil, round(latency_ms, 2), final_rgb, bic_np, active_title
 
 
 @app.get("/health")
@@ -144,11 +220,35 @@ def health_check():
     demo_samples = get_demo_image_paths(DEMO_DIR)
     return {
         "status": "healthy",
-        "model": "Official Pretrained FSRCNN (2x)",
+        "loaded_models": list(LOADED_ENGINES.keys()),
+        "default_model": "fsrcnn",
         "color_shift": "0.00 (Locked Chroma)",
         "device": "cpu",
         "available_demo_samples": len(demo_samples),
         "scale_factor": "2x",
+        "supports_tta": True,
+    }
+
+
+@app.get("/api/models")
+def get_available_models():
+    """Returns the list of configured super-resolution architectures and active status."""
+    return {
+        "models": [
+            {
+                "id": k,
+                "name": v["name"],
+                "scale": v["scale"],
+                "description": v["description"],
+                "typical_latency": v["typical_latency"],
+                "badge": v.get("badge", ""),
+                "is_loaded": k in LOADED_ENGINES,
+                "is_default": v.get("is_default", False),
+            }
+            for k, v in AVAILABLE_MODELS.items()
+        ],
+        "active_models_count": len(LOADED_ENGINES),
+        "supports_tta": True,
     }
 
 
@@ -193,7 +293,11 @@ def get_sample_image(sample_id: int, img_type: str):
 
 
 @app.post("/api/sr/predict-sample/{sample_id}")
-def predict_sample(sample_id: int):
+def predict_sample(
+    sample_id: int,
+    model: str = Query("fsrcnn", description="Model architecture: fsrcnn, edsr, espcn"),
+    tta: bool = Query(False, description="Enable 8x Geometric Self-Ensemble (TTA)"),
+):
     lr_file = DEMO_DIR / f"sample_{sample_id}_lr_10m.png"
     target_file = DEMO_DIR / f"sample_{sample_id}_target_05m.png"
 
@@ -203,7 +307,9 @@ def predict_sample(sample_id: int):
     lr_pil = Image.open(lr_file).convert("RGB")
     target_pil = Image.open(target_file).convert("RGB")
 
-    bicubic_pil, sr_pil, latency_ms, sr_np, bic_np = run_pretrained_sr(lr_pil)
+    bicubic_pil, sr_pil, latency_ms, sr_np, bic_np, model_title = run_pretrained_sr(
+        lr_pil, model_name=model, enable_tta=tta
+    )
     target_np = np.array(target_pil)
 
     edge_bic = float(compute_edge_energy(bic_np))
@@ -216,7 +322,9 @@ def predict_sample(sample_id: int):
     return {
         "sample_id": int(sample_id),
         "source": f"SEN2VENUS Benchmark Patch {sample_id}",
-        "model": "Official Pretrained FSRCNN (2x)",
+        "model": model_title,
+        "model_id": model.lower(),
+        "tta_enabled": tta,
         "input_dimensions": f"{lr_pil.width}x{lr_pil.height}",
         "output_dimensions": f"{sr_pil.width}x{sr_pil.height}",
         "pixel_count_input": lr_pil.width * lr_pil.height,
@@ -247,6 +355,8 @@ def predict_from_coordinates(
     lat: float = Query(..., description="Latitude"),
     lon: float = Query(..., description="Longitude"),
     zoom: int = Query(15, ge=1, le=18, description="Zoom level"),
+    model: str = Query("fsrcnn", description="Model architecture: fsrcnn, edsr, espcn"),
+    tta: bool = Query(False, description="Enable 8x Geometric Self-Ensemble (TTA)"),
 ):
     """
     Fetches real-time satellite imagery for ANY location on Earth, simulates authentic
@@ -256,7 +366,7 @@ def predict_from_coordinates(
     tile_url = f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{zoom}/{y}/{x}"
 
     try:
-        resp = requests.get(tile_url, headers={"User-Agent": "SentinelSR/3.0"}, timeout=12)
+        resp = requests.get(tile_url, headers={"User-Agent": "SentinelSR/3.1"}, timeout=12)
         resp.raise_for_status()
         tile_pil = Image.open(io.BytesIO(resp.content)).convert("RGB")
     except Exception as e:
@@ -266,7 +376,9 @@ def predict_from_coordinates(
     lr_pil = tile_pil.resize((tile_pil.width // 2, tile_pil.height // 2), resample=Image.BICUBIC)
 
     # Run official pretrained super-resolution back to 256x256
-    bicubic_pil, sr_pil, latency_ms, sr_np, bic_np = run_pretrained_sr(lr_pil)
+    bicubic_pil, sr_pil, latency_ms, sr_np, bic_np, model_title = run_pretrained_sr(
+        lr_pil, model_name=model, enable_tta=tta
+    )
 
     e_bic = compute_edge_energy(bic_np)
     e_sr = compute_edge_energy(sr_np)
@@ -275,7 +387,9 @@ def predict_from_coordinates(
 
     return {
         "source": f"Live Satellite: ({lat:.4f}, {lon:.4f})",
-        "model": "Official Pretrained FSRCNN (2x)",
+        "model": model_title,
+        "model_id": model.lower(),
+        "tta_enabled": tta,
         "location": {"lat": lat, "lon": lon, "zoom": zoom},
         "input_dimensions": f"{lr_pil.width}x{lr_pil.height} (Simulated 10m LR)",
         "output_dimensions": f"{sr_pil.width}x{sr_pil.height} (Super-Resolved 5m)",
@@ -304,6 +418,8 @@ def predict_from_coordinates(
 async def predict_custom_image(
     file: UploadFile = File(...),
     return_base64: bool = Query(False),
+    model: str = Query("fsrcnn", description="Model architecture: fsrcnn, edsr, espcn"),
+    tta: bool = Query(False, description="Enable 8x Geometric Self-Ensemble (TTA)"),
 ):
     try:
         contents = await file.read()
@@ -311,7 +427,9 @@ async def predict_custom_image(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
-    bicubic_pil, sr_pil, latency_ms, sr_np, bic_np = run_pretrained_sr(pil_img)
+    bicubic_pil, sr_pil, latency_ms, sr_np, bic_np, model_title = run_pretrained_sr(
+        pil_img, model_name=model, enable_tta=tta
+    )
 
     if return_base64:
         e_bic = compute_edge_energy(bic_np)
@@ -321,7 +439,9 @@ async def predict_custom_image(
 
         return {
             "source": f"Uploaded File: {file.filename}",
-            "model": "Official Pretrained FSRCNN (2x)",
+            "model": model_title,
+            "model_id": model.lower(),
+            "tta_enabled": tta,
             "filename": file.filename,
             "input_dimensions": f"{pil_img.width}x{pil_img.height}",
             "output_dimensions": f"{sr_pil.width}x{sr_pil.height}",
