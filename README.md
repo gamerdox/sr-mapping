@@ -1,4 +1,4 @@
-﻿# Sentinel-2 Satellite Super-Resolution Studio 🛰️
+# Sentinel-2 Satellite Super-Resolution Studio 🛰️
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688.svg?logo=fastapi)](https://fastapi.tiangolo.com)
@@ -19,12 +19,14 @@ An end-to-end Deep Learning system and interactive web studio that super-resolve
 ## 🌟 Key Features
 
 * **Multi-Model Deep Learning Suite**:
-  * **⚡ FSRCNN** *(Fast CNN, ~18 ms)*: Real-time 4-layer network for smooth interactive world map panning.
-  * **🔬 EDSR** *(Deep Residual SOTA, ~3.3 s on CPU)*: 16 deep residual blocks with ~43 million parameters for maximum structural definition on buildings and roads.
-  * **🚀 ESPCN** *(Sub-Pixel CNN, ~8.4 ms)*: Ultra-lightweight sub-pixel convolution network.
-* **Zero-Color-Drift Luminance Engine ($Y\text{CrCb}$)**:
+  * **🎯 Sentinel2SRNet (Custom Trained)**: PyTorch residual CNN trained on SEN2VENµS paired Sentinel-2/VENµS data with L1 + Sobel edge + zero-mean residual loss. Default model.
+  * **OpenCV Pretrained Baselines (generic)** — used for latency-accuracy comparison, NOT trained on satellite data:
+    * **⚡ FSRCNN** *(Fast CNN, ~18 ms)*: Real-time 4-layer network for smooth interactive world map panning.
+    * **🔬 EDSR** *(Deep Residual SOTA, ~3.3 s on CPU)*: 16 deep residual blocks with ~43 million parameters for maximum structural definition on buildings and roads.
+    * **🚀 ESPCN** *(Sub-Pixel CNN, ~8.4 ms)*: Ultra-lightweight sub-pixel convolution network.
+* **Zero-Color-Drift Engine**:
   * Decouples luminance ($Y$) from chroma ($Cr, Cb$), running deep edge reconstruction strictly on the luminance channel.
-  * **Guarantees 0.00 color shift** and eliminates cross-sensor radiometric green/yellow tinting.
+  * **YCrCb chroma locking ensures color fidelity**; baseline models receive additional luminance sharpening post-processing.
 * **8x Geometric Self-Ensemble (Test-Time Augmentation - TTA)**:
   * Averages 8 rotational and flip transformations at inference time, eliminating directional convolution artifacts and boosting **PSNR by +0.2 to +0.4 dB**.
 * **Remote Sensing Spectral Modes**:
@@ -32,7 +34,7 @@ An end-to-end Deep Learning system and interactive web studio that super-resolve
   * **🔴 False-Color CIR (Color Infrared)**: Highlights vegetation in vivid crimson red to distinguish canopy from urban concrete.
   * **🌱 NDVI Greenness Index**: Normalized Difference Vegetation Index heatmap rendered via the `RdYlGn` colormap.
 * **Interactive Global Map & Studio**:
-  * **World Satellite Map (Leaflet.js)**: Click **anywhere on Earth** to fetch live satellite imagery and super-resolve it in real-time.
+  * **World Satellite Map (Leaflet.js)**: Click **anywhere on Earth** to fetch live satellite imagery (using Esri World Imagery as a proxy) and super-resolve it in real-time.
   * **Geocoding City Search**: Search any city or landmark (e.g. *"Tokyo"*, *"London"*, *"Mt Fuji"*) via OpenStreetMap Nominatim.
   * **Studio Inspector**: 512×512 split comparison slider, 400% magnifying loupe, and AI difference heatmap.
   * **Live Quantitative Metrics**: Real-time PSNR (dB) and SSIM metrics calculated dynamically against paired VENµS ground-truth data.
@@ -95,7 +97,7 @@ sr-mapping/
 │   ├── FSRCNN_x2.pb         # Pretrained Fast CNN weights (38.9 KB)
 │   ├── EDSR_x2.pb           # Pretrained Deep Residual SOTA weights (38.5 MB)
 │   ├── ESPCN_x2.pb          # Pretrained Sub-Pixel CNN weights (86.4 KB)
-│   └── sr_sentinel2_2x.pt   # PyTorch checkpoint trained on SEN2VENµS
+│   └── sr_sentinel2_2x.pt   # PyTorch checkpoint trained on SEN2VENµS (Default Model)
 ├── data/
 │   └── sen2venus_sample/    # 5 paired evaluation patches (LR 10m, Bicubic, Target 5m)
 ├── src/
@@ -114,3 +116,10 @@ sr-mapping/
 
 ## 📄 License
 This project is open-source under the MIT License.
+
+---
+
+## ⚠️ Known Limitations
+* **Single-Biome Validation**: Validation is currently only on the FGMANAUS (Manaus rainforest) site; urban and agricultural patches are actively being added.
+* **Spectral Proxies**: The NDVI and CIR modes shown in the UI are RGB-derived proxies, not true multispectral (real NDVI requires NIR Band 8, which is unavailable in the RGB pipeline).
+* **Live Map Imagery**: The live map fetches Esri World Imagery as a visual proxy, not true live Sentinel-2 imagery.

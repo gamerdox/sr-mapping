@@ -1,5 +1,6 @@
 let currentData = null;
 let showingHeatmap = false;
+let showingConfidence = false;
 let loupeActive = false;
 let currentSpectralMode = 'rgb'; // 'rgb' | 'cir' | 'ndvi'
 let map;
@@ -11,27 +12,55 @@ let activeLocationParams = { lat: 48.8584, lng: 2.2945, zoom: 16, name: 'Eiffel 
 let activeSampleId = null;
 let activeUploadFile = null;
 
+async function initModelDropdown() {
+  try {
+    const res = await fetch('/api/models');
+    if (!res.ok) return;
+    const data = await res.json();
+    const select = document.getElementById('modelSelect');
+    if (!select || !data.models) return;
+
+    select.innerHTML = '';
+    data.models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      const statusNote = m.is_loaded ? '' : ' [Not Loaded]';
+      opt.textContent = `${m.badge} ${statusNote}`;
+      opt.disabled = !m.is_loaded;
+      if (m.is_default && m.is_loaded) opt.selected = true;
+      select.appendChild(opt);
+    });
+  } catch (err) {
+    console.warn("Could not populate models dynamically, keeping defaults:", err);
+  }
+}
+
 function getModelParams() {
   const modelSelect = document.getElementById('modelSelect');
   const ttaToggle = document.getElementById('ttaToggle');
-  const model = modelSelect ? modelSelect.value : 'fsrcnn';
+  const scaleSelect = document.getElementById('scaleSelect');
+  const model = modelSelect ? modelSelect.value : 'sentinel2srnet';
   const tta = ttaToggle ? ttaToggle.checked : false;
-  return { model, tta };
+  const scale = scaleSelect ? parseInt(scaleSelect.value, 10) : 4;
+  return { model, tta, scale };
 }
 
 function onModelOrTTAChanged() {
-  const { model, tta } = getModelParams();
+  const { model, tta, scale } = getModelParams();
 
   // Update header badges
   const modelBadge = document.getElementById('activeModelBadge');
   if (modelBadge) {
-    modelBadge.innerText = `Model: ${model.toUpperCase()} (2x)`;
-    if (model === 'edsr') {
+    modelBadge.innerText = `Model: ${model.toUpperCase()} (${scale}x / ${scale === 4 ? '2.5m' : '5m'} GSD)`;
+    if (model === 'sentinel2srnet') {
+      modelBadge.style.background = '#065f46';
+      modelBadge.style.color = '#6ee7b7';
+    } else if (model === 'edsr') {
       modelBadge.style.background = '#7c2d12';
       modelBadge.style.color = '#fdba74';
     } else if (model === 'espcn') {
-      modelBadge.style.background = '#065f46';
-      modelBadge.style.color = '#6ee7b7';
+      modelBadge.style.background = '#0284c7';
+      modelBadge.style.color = '#bae6fd';
     } else {
       modelBadge.style.background = '#1e3a8a';
       modelBadge.style.color = '#93c5fd';
@@ -59,10 +88,23 @@ function onModelOrTTAChanged() {
   }
 }
 
+let compareBaseline = 'input'; // 'input' | 'bicubic'
+
+function setCompareBaseline(mode) {
+  compareBaseline = mode;
+  const btnIn = document.getElementById('btnCompareInput');
+  const btnBic = document.getElementById('btnCompareBicubic');
+  if (btnIn) btnIn.classList.toggle('active', mode === 'input');
+  if (btnBic) btnBic.classList.toggle('active', mode === 'bicubic');
+  updateActiveImages();
+}
+
 // Spectral Remote-Sensing Band Switcher
 function setSpectralMode(mode) {
   currentSpectralMode = mode;
-  document.querySelectorAll('.spec-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.spec-btn').forEach(b => {
+    if (b.id.startsWith('btnSpec')) b.classList.remove('active');
+  });
   if (mode === 'rgb') document.getElementById('btnSpecRGB').classList.add('active');
   if (mode === 'cir') document.getElementById('btnSpecCIR').classList.add('active');
   if (mode === 'ndvi') document.getElementById('btnSpecNDVI').classList.add('active');
@@ -73,7 +115,15 @@ function setSpectralMode(mode) {
 function updateActiveImages() {
   if (!currentData || !currentData.images) return;
 
-  let leftSrc = currentData.images.bicubic;
+  const splitBox = document.getElementById('splitBox');
+  const sliderLeftImg = document.getElementById('sliderLeftImg');
+  if (splitBox && sliderLeftImg) {
+    sliderLeftImg.style.width = splitBox.offsetWidth + 'px';
+  }
+
+  let leftSrc = (compareBaseline === 'input' && currentData.images.lr_nearest && currentSpectralMode === 'rgb')
+    ? currentData.images.lr_nearest
+    : currentData.images.bicubic;
   let rightSrc = currentData.images.sr_enhanced;
 
   if (currentSpectralMode === 'cir' && currentData.images.cir_sr) {
@@ -84,19 +134,32 @@ function updateActiveImages() {
     rightSrc = currentData.images.ndvi_sr;
   }
 
-  if (showingHeatmap) {
+  if (showingConfidence && currentData.images.confidence_heatmap) {
+    rightSrc = currentData.images.confidence_heatmap;
+  } else if (showingHeatmap && currentData.images.difference_heatmap) {
     rightSrc = currentData.images.difference_heatmap;
   }
 
   document.getElementById('sliderLeftImg').src = leftSrc;
   document.getElementById('sliderRightImg').src = rightSrc;
 
+  const leftLabel = document.querySelector('.split-label.label-left');
+  if (leftLabel) {
+    const isSub4m = currentData && currentData.scale_factor === '4x';
+    leftLabel.innerText = (compareBaseline === 'input' && currentSpectralMode === 'rgb')
+      ? '◀ Sentinel-2 10m (Raw Pixelated Input)'
+      : `◀ Bicubic Baseline ${isSub4m ? '2.5m Grid' : '5m'} (Blurry)`;
+  }
+
   const rightLabel = document.getElementById('rightLabel');
-  if (showingHeatmap) {
+  if (showingConfidence) {
+    rightLabel.innerText = '🎯 Model Confidence Map (Green=High, Red=Uncertain) ▶';
+  } else if (showingHeatmap) {
     rightLabel.innerText = 'AI Difference Heatmap (Synthesized Edges) ▶';
   } else {
     const specTag = currentSpectralMode.toUpperCase();
-    rightLabel.innerText = `${currentData.model} (${specTag}) ▶`;
+    const gsdTag = currentData.target_gsd ? `(${currentData.target_gsd} ${specTag})` : `(Crisp 5m ${specTag})`;
+    rightLabel.innerText = `${currentData.model} ${gsdTag} ▶`;
   }
 }
 
@@ -201,13 +264,13 @@ function initMap() {
 async function loadLiveLocation(lat, lng, zoom = 15) {
   activeSourceType = 'location';
   activeLocationParams = { lat, lng, zoom };
-  const { model, tta } = getModelParams();
+  const { model, tta, scale } = getModelParams();
 
-  showLoader(`Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on Lat: ${lat.toFixed(4)}, Lon: ${lng.toFixed(4)}...`);
+  showLoader(`Running ${model.toUpperCase()} (${scale}x / ${scale === 4 ? '2.5m' : '5m'} GSD)${tta ? ' + 8x TTA' : ''} on Lat: ${lat.toFixed(4)}, Lon: ${lng.toFixed(4)}...`);
   document.querySelectorAll('#sampleButtons button').forEach(b => b.classList.remove('active'));
 
   try {
-    const res = await fetch(`/api/sr/predict-location?lat=${lat}&lon=${lng}&zoom=${zoom}&model=${model}&tta=${tta}`, {
+    const res = await fetch(`/api/sr/predict-location?lat=${lat}&lon=${lng}&zoom=${zoom}&model=${model}&tta=${tta}&scale=${scale}`, {
       method: 'POST'
     });
     if (!res.ok) {
@@ -246,12 +309,20 @@ const loupe = document.getElementById('loupe');
 
 function updateSplit(clientX) {
   const rect = splitBox.getBoundingClientRect();
+  const leftImg = document.getElementById('sliderLeftImg');
+  if (leftImg) leftImg.style.width = rect.width + 'px';
   let pos = clientX - rect.left;
   pos = Math.max(10, Math.min(pos, rect.width - 10));
   const pct = (pos / rect.width) * 100;
   splitOverlay.style.width = pct + '%';
   splitHandle.style.left = pct + '%';
 }
+
+window.addEventListener('resize', () => {
+  if (splitBox && document.getElementById('sliderLeftImg')) {
+    document.getElementById('sliderLeftImg').style.width = splitBox.offsetWidth + 'px';
+  }
+});
 
 let isDragging = false;
 splitBox.addEventListener('mousedown', (e) => {
@@ -305,37 +376,78 @@ function moveLoupe(e) {
   loupe.style.backgroundPosition = `-${(x * zoomFactor) - 70}px -${(y * zoomFactor) - 70}px`;
 }
 
-// 5. Heatmap Toggle
+// 5. Heatmap & Confidence Toggles
 function toggleHeatmap() {
   if (!currentData) return;
   showingHeatmap = !showingHeatmap;
-  const btn = document.getElementById('heatmapBtn');
+  showingConfidence = false;
+
+  const btnH = document.getElementById('heatmapBtn');
+  const btnC = document.getElementById('confBtn');
+  if (btnC) {
+    btnC.classList.remove('active');
+    btnC.innerText = '🎯 Confidence Map';
+  }
 
   if (showingHeatmap) {
-    btn.classList.add('active');
-    btn.innerText = 'View AI Enhanced Image';
+    btnH.classList.add('active');
+    btnH.innerText = 'View Super-Resolved Image';
   } else {
-    btn.classList.remove('active');
-    btn.innerText = 'AI Difference Heatmap';
+    btnH.classList.remove('active');
+    btnH.innerText = 'AI Difference Heatmap';
   }
   updateActiveImages();
 }
+
+function toggleConfidence() {
+  if (!currentData) return;
+  showingConfidence = !showingConfidence;
+  showingHeatmap = false;
+
+  const btnC = document.getElementById('confBtn');
+  const btnH = document.getElementById('heatmapBtn');
+  if (btnH) {
+    btnH.classList.remove('active');
+    btnH.innerText = 'AI Difference Heatmap';
+  }
+
+  if (showingConfidence) {
+    btnC.classList.add('active');
+    btnC.innerText = 'View Super-Resolved Image';
+  } else {
+    btnC.classList.remove('active');
+    btnC.innerText = '🎯 Confidence Map';
+  }
+  updateActiveImages();
+}
+
+const SAMPLE_LABELS = {
+  0: 'SEN2VENµS Sample 0 (Rainforest Canopy - Manaus, Brazil)',
+  1: 'SEN2VENµS Sample 1 (Parcel Boundary - Manaus, Brazil)',
+  2: 'SEN2VENµS Sample 2 (River / Water Body - Amazon)',
+  3: 'SEN2VENµS Sample 3 (Topography & Canopy - Manaus, Brazil)',
+  4: 'SEN2VENµS Sample 4 (High Contrast Forest Clearing - Amazon)',
+  5: 'Validation Sample 5 (Urban Buildings & Roads - Versailles)',
+  6: 'Validation Sample 6 (Agricultural Cropland & Field Boundaries - Bordeaux)',
+  7: 'Validation Sample 7 (Coastal & Estuary Edge - Gironde)',
+};
 
 // 6. Load Dataset Sample
 async function loadSample(id) {
   activeSourceType = 'sample';
   activeSampleId = id;
-  const { model, tta } = getModelParams();
+  const { model, tta, scale } = getModelParams();
 
-  document.querySelectorAll('#sampleButtons button').forEach((b, idx) => {
-    b.classList.toggle('active', idx === id);
+  document.querySelectorAll('#sampleButtons button').forEach((b) => {
+    b.classList.toggle('active', b.getAttribute('onclick') === `loadSample(${id})`);
   });
-  showLoader(`Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on Sample ${id}...`);
+  showLoader(`Running ${model.toUpperCase()} (${scale}x / ${scale === 4 ? '2.5m' : '5m'} GSD)${tta ? ' + 8x TTA' : ''} on Sample ${id}...`);
   document.getElementById('targetCard').style.display = 'flex';
-  document.getElementById('activeSourceTag').innerText = `SEN2VENµS Sample ${id} (Manaus, Brazil)`;
+  const label = SAMPLE_LABELS[id] || `Benchmark Sample ${id}`;
+  document.getElementById('activeSourceTag').innerText = label;
 
   try {
-    const res = await fetch(`/api/sr/predict-sample/${id}?model=${model}&tta=${tta}`, { method: 'POST' });
+    const res = await fetch(`/api/sr/predict-sample/${id}?model=${model}&tta=${tta}&scale=${scale}`, { method: 'POST' });
     currentData = await res.json();
     renderData(currentData);
   } catch (err) {
@@ -355,16 +467,16 @@ async function handleCustomUpload(input) {
 }
 
 async function uploadExistingFile(file) {
-  const { model, tta } = getModelParams();
+  const { model, tta, scale } = getModelParams();
   const formData = new FormData();
   formData.append('file', file);
 
   document.querySelectorAll('#sampleButtons button').forEach(b => b.classList.remove('active'));
-  showLoader(`Running ${model.toUpperCase()}${tta ? ' + 8x TTA' : ''} on ${file.name}...`);
+  showLoader(`Running ${model.toUpperCase()} (${scale}x / ${scale === 4 ? '2.5m' : '5m'} GSD)${tta ? ' + 8x TTA' : ''} on ${file.name}...`);
   document.getElementById('activeSourceTag').innerText = `Uploaded: ${file.name}`;
 
   try {
-    const res = await fetch(`/api/sr/predict?return_base64=true&model=${model}&tta=${tta}`, {
+    const res = await fetch(`/api/sr/predict?return_base64=true&model=${model}&tta=${tta}&scale=${scale}`, {
       method: 'POST',
       body: formData
     });
@@ -390,12 +502,32 @@ function renderData(data) {
     document.getElementById('imgTarget').src = data.images.ground_truth_target;
   }
 
+  const cardBicTitle = document.getElementById('cardBicTitle');
+  if (cardBicTitle) {
+    cardBicTitle.innerText = `2. Bicubic Baseline (${data.scale_factor || '4x'})`;
+  }
+
   const cardSRTitle = document.getElementById('cardSRTitle');
   if (cardSRTitle) {
     cardSRTitle.innerText = `3. ${data.model}`;
   }
 
-  document.getElementById('pixelsStat').innerText = `${data.pixel_count_input.toLocaleString()} → ${data.pixel_count_output.toLocaleString()} (4×)`;
+  // Update validation badge
+  const valBadge = document.getElementById('validationBadge');
+  if (valBadge && data.validation_status) {
+    valBadge.innerText = data.validation_status.split('(')[0].trim();
+    if (data.validation_status.includes('Validated (Paired') || data.validation_status.includes('Validated (VENµS')) {
+      valBadge.style.background = '#14532d';
+      valBadge.style.color = '#86efac';
+    } else {
+      valBadge.style.background = '#78350f';
+      valBadge.style.color = '#fde68a';
+    }
+  }
+
+  const mult = Math.round(data.pixel_count_output / data.pixel_count_input);
+  const targetTag = data.target_gsd || (mult === 16 ? '2.5m Sub-4m' : '5m GSD');
+  document.getElementById('pixelsStat').innerText = `${data.pixel_count_input.toLocaleString()} → ${data.pixel_count_output.toLocaleString()} (${mult}× / ${targetTag})`;
   document.getElementById('latencyStat').innerText = `${data.latency_ms} ms`;
   const gain = data.edge_sharpness.sharpness_gain;
   document.getElementById('edgeStat').innerText = `${gain >= 0 ? '+' : ''}${gain}`;
@@ -423,15 +555,19 @@ function renderData(data) {
       targetMetricsTag.style.display = 'inline-block';
     }
   } else {
-    if (metricsStat) metricsStat.innerText = '-- (Live Coordinates)';
+    if (metricsStat) metricsStat.innerHTML = '<span style="color:#fde68a;">Unvalidated (Geo-Tile)</span>';
     if (bicubicMetricsTag) bicubicMetricsTag.style.display = 'none';
     if (srMetricsTag) srMetricsTag.style.display = 'none';
     if (targetMetricsTag) targetMetricsTag.style.display = 'none';
   }
 
-  document.getElementById('lrDimTag').innerText = `${data.input_dimensions}`;
-  document.getElementById('bicubicTag').innerText = `Edge: ${data.edge_sharpness.bicubic}`;
-  document.getElementById('srTag').innerText = `Edge: ${data.edge_sharpness.model_sr}`;
+  document.getElementById('lrDimTag').innerText = `${data.input_dimensions} (10m Native GSD)`;
+  document.getElementById('bicubicTag').innerText = `${data.output_dimensions} | Edge: ${data.edge_sharpness.bicubic}`;
+  document.getElementById('srTag').innerText = `${data.output_dimensions} (${data.target_gsd || '2.5m GSD'}) | Edge: ${data.edge_sharpness.model_sr}`;
+  const targetTagEl = document.getElementById('targetTag');
+  if (targetTagEl) {
+    targetTagEl.innerText = `${data.output_dimensions} (Ground Truth Reference)`;
+  }
 }
 
 // 9. Download Enhanced Image
@@ -444,7 +580,8 @@ function downloadEnhanced() {
 }
 
 // Startup
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+  await initModelDropdown();
   initMap();
   jumpToLandmark(48.8584, 2.2945, 16, 'Eiffel Tower (Paris, France)');
 });

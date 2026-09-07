@@ -11,12 +11,13 @@
   <div class="container">
     <header>
       <span class="badge">Earth Observation AI</span>
-      <span class="badge" id="activeModelBadge" style="background: #1e3a8a; color: #93c5fd;">Model: FSRCNN (2x)</span>
+      <span class="badge" id="activeModelBadge" style="background: #065f46; color: #6ee7b7;">Model: Sentinel2SRNet (4x / 2.5m GSD)</span>
       <span class="badge" id="activeTtaBadge" style="background: #0284c7; color: #fff; display: none;">8x TTA Active</span>
-      <span class="badge" style="background: #14532d; color: #86efac;">Zero Color Drift Engine</span>
+      <span class="badge" id="validationBadge" style="background: #14532d; color: #86efac;">Validated (SEN2VENµS)</span>
+      <span class="badge" style="background: #1e3a8a; color: #93c5fd;">Zero Color Drift Engine</span>
       <span class="badge" style="background: #581c87; color: #d8b4fe;">FastAPI Backend</span>
       <h1>Sentinel-2 Super-Resolution Mapping Studio</h1>
-      <p class="subtitle">Multi-Model Deep Super-Resolution (FSRCNN, EDSR, ESPCN) with 8x Geometric Self-Ensemble & locked-chroma luminance detail reconstruction.</p>
+      <p class="subtitle">Custom Satellite-Trained CNN (Sentinel2SRNet) with 8x Geometric Self-Ensemble, Uncertainty Estimation & Locked-Chroma Engine.</p>
 
       <div class="stats-bar">
         <div class="stat-box">
@@ -25,11 +26,11 @@
         </div>
         <div class="stat-box">
           <div class="stat-label">Pixel Multiplier</div>
-          <div class="stat-val" id="pixelsStat">65,536 → 262,144 (4×)</div>
+          <div class="stat-val" id="pixelsStat">65,536 → 1,048,576 (16×)</div>
         </div>
         <div class="stat-box">
-          <div class="stat-label">Color Shift (Tint)</div>
-          <div class="stat-val" id="edgeStat" style="color: var(--success);">0.00 (Zero Tint)</div>
+          <div class="stat-label">Edge Energy Gain</div>
+          <div class="stat-val" id="edgeStat" style="color: var(--success);">+0.0</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Fidelity (PSNR / SSIM)</div>
@@ -37,7 +38,7 @@
         </div>
         <div class="stat-box">
           <div class="stat-label">CPU Inference Latency</div>
-          <div class="stat-val" id="latencyStat">~18 ms</div>
+          <div class="stat-val" id="latencyStat">~25 ms</div>
         </div>
       </div>
     </header>
@@ -77,8 +78,9 @@
       <div class="panel">
         <div class="panel-title">
           <span>2. Interactive Comparison Studio</span>
-          <div style="display: flex; gap: 6px;">
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
             <button id="loupeBtn" onclick="toggleLoupe()">4x Zoom Loupe</button>
+            <button id="confBtn" class="btn-cyan" onclick="toggleConfidence()">🎯 Confidence Map</button>
             <button id="heatmapBtn" class="btn-purple" onclick="toggleHeatmap()">AI Difference Heatmap</button>
             <button class="btn-success" onclick="downloadEnhanced()">Download PNG</button>
           </div>
@@ -90,9 +92,17 @@
           <div class="setting-item">
             <label for="modelSelect"><b>Model Architecture:</b></label>
             <select id="modelSelect" onchange="onModelOrTTAChanged()">
-              <option value="fsrcnn" selected>⚡ FSRCNN (Fast CNN - ~18ms)</option>
-              <option value="edsr">🔬 EDSR (Deep Residual SOTA - High Detail)</option>
-              <option value="espcn">🚀 ESPCN (Sub-Pixel CNN - ~10ms)</option>
+              <option value="sentinel2srnet" selected>🎯 Sentinel2SRNet (Custom Satellite-Trained - ~25ms)</option>
+              <option value="fsrcnn">⚡ FSRCNN (OpenCV Baseline - ~18ms)</option>
+              <option value="edsr">🔬 EDSR (Deep Residual Baseline - ~3.2s)</option>
+              <option value="espcn">🚀 ESPCN (Sub-Pixel Baseline - ~10ms)</option>
+            </select>
+          </div>
+          <div class="setting-item">
+            <label for="scaleSelect"><b>Target Resolution:</b></label>
+            <select id="scaleSelect" onchange="onModelOrTTAChanged()">
+              <option value="4" selected>4x Cascaded (2.5m GSD — Sub-4m Target 🎯)</option>
+              <option value="2">2x Standard (5.0m GSD)</option>
             </select>
           </div>
           <div class="setting-item">
@@ -104,12 +114,19 @@
           </div>
         </div>
 
-        <!-- Spectral Remote-Sensing Mode Bar -->
-        <div class="spectral-bar">
-          <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-right: 2px;">Spectral Band:</span>
-          <button id="btnSpecRGB" class="spec-btn active" onclick="setSpectralMode('rgb')">🌿 Natural RGB</button>
-          <button id="btnSpecCIR" class="spec-btn" onclick="setSpectralMode('cir')">🔴 False-Color CIR (Infrared)</button>
-          <button id="btnSpecNDVI" class="spec-btn" onclick="setSpectralMode('ndvi')">🌱 NDVI Greenness Index</button>
+        <!-- Spectral & Baseline Comparison Mode Bar -->
+        <div class="spectral-bar" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-right: 2px;">Spectral:</span>
+            <button id="btnSpecRGB" class="spec-btn active" onclick="setSpectralMode('rgb')">🌿 RGB</button>
+            <button id="btnSpecCIR" class="spec-btn" onclick="setSpectralMode('cir')">🔴 False-Color CIR</button>
+            <button id="btnSpecNDVI" class="spec-btn" onclick="setSpectralMode('ndvi')">🌱 VARI Vegetation</button>
+          </div>
+          <div>
+            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-right: 2px;">Compare Left:</span>
+            <button id="btnCompareInput" class="spec-btn active" onclick="setCompareBaseline('input')">10m Raw Input</button>
+            <button id="btnCompareBicubic" class="spec-btn" onclick="setCompareBaseline('bicubic')">Bicubic Baseline</button>
+          </div>
         </div>
 
         <div id="edsrWarning" class="alert-banner" style="display: none;">
@@ -128,7 +145,7 @@
           </div>
           <div class="split-handle" id="splitHandle">⇄</div>
           <div class="split-label label-left">◀ Bicubic (Blurry Baseline)</div>
-          <div class="split-label label-right" id="rightLabel">FSRCNN Pretrained AI (Crisp 2x) ▶</div>
+          <div class="split-label label-right" id="rightLabel">Sentinel2SRNet (2.5m GSD Sub-4m Target) ▶</div>
           <div class="loupe" id="loupe"></div>
         </div>
       </div>
@@ -142,16 +159,17 @@
       </div>
 
       <div class="controls-bar" id="sampleButtons">
-        <button onclick="loadSample(4)">Sample 4 (High Contrast Clearing)</button>
-        <button onclick="loadSample(2)">Sample 2 (River / Water Body)</button>
-        <button onclick="loadSample(3)">Sample 3 (Topography & Canopy)</button>
-        <button onclick="loadSample(1)">Sample 1 (Parcel Boundary)</button>
-        <button onclick="loadSample(0)">Sample 0 (Primary Forest)</button>
+        <button onclick="loadSample(5)">🏙️ Urban Buildings (Versailles)</button>
+        <button onclick="loadSample(6)">🌾 Agricultural Cropland (Bordeaux)</button>
+        <button onclick="loadSample(7)">🌊 Coastal Estuary (Gironde)</button>
+        <button onclick="loadSample(0)">🌴 Rainforest Canopy (Manaus)</button>
+        <button onclick="loadSample(2)">🏞️ River Boundary (Amazon)</button>
+        <button onclick="loadSample(4)">🌲 Forest Clearing (Amazon)</button>
       </div>
 
       <div class="dropzone" onclick="document.getElementById('customInput').click()">
         <p style="font-size: 14px; font-weight: 700; color: #fff;">Click or Drag & Drop Any Satellite Image (PNG / JPG)</p>
-        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Runs official pretrained 2x super-resolution with zero color shift in ~18ms and loads it into the split-screen inspector.</p>
+        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Runs deep super-resolution to 2.5m GSD (< 4m target) with zero color shift on CPU and loads it into the split-screen inspector.</p>
         <input type="file" id="customInput" accept="image/*" style="display: none;" onchange="handleCustomUpload(this)">
       </div>
 
@@ -172,10 +190,10 @@
 
       <div class="card">
         <div class="card-header">
-          <span>2. Bicubic Baseline (2x)</span>
+          <span id="cardBicTitle">2. Bicubic Baseline</span>
           <div style="display: flex; gap: 4px; align-items: center;">
             <span class="tag" id="bicubicMetricsTag" style="display: none; font-size: 10px; background: #334155; color: #94a3b8;">PSNR: --</span>
-            <span class="tag" id="bicubicTag">256×256 (65k px)</span>
+            <span class="tag" id="bicubicTag">512×512 (262k px)</span>
           </div>
         </div>
         <div class="card-body">
@@ -185,10 +203,10 @@
 
       <div class="card" style="border-color: var(--accent);">
         <div class="card-header" style="background: rgba(56, 189, 248, 0.1);">
-          <span id="cardSRTitle" style="color: var(--accent);">3. FSRCNN Pretrained (AI 2x)</span>
+          <span id="cardSRTitle" style="color: var(--accent);">3. Sentinel2SRNet (2.5m GSD)</span>
           <div style="display: flex; gap: 4px; align-items: center;">
             <span class="tag" id="srMetricsTag" style="display: none; font-size: 10px; background: #581c87; color: #d8b4fe;">PSNR: --</span>
-            <span class="tag tag-success" id="srTag">256×256 (65k px)</span>
+            <span class="tag tag-success" id="srTag">512×512 (262k px)</span>
           </div>
         </div>
         <div class="card-body">

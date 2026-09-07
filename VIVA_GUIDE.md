@@ -1,4 +1,4 @@
-﻿# Viva & Presentation Defense Guide: Sentinel-2 Super-Resolution
+# Viva & Presentation Defense Guide: Sentinel-2 Super-Resolution
 
 This quick-reference guide prepares you for common questions asked by professors, evaluators, and viva examiners regarding this project.
 
@@ -18,7 +18,7 @@ This quick-reference guide prepares you for common questions asked by professors
 
 ### Q3: Why didn't you use Generative AI (GANs or Stable Diffusion)?
 **Answer:**
-> *"In Earth Observation, **hallucination is unacceptable and dangerous** — a generative diffusion or GAN model can invent non-existent roads, fake vehicles, or altered agricultural crop textures to satisfy an adversarial discriminator. We intentionally use **deterministic regression CNNs (L1/Sobel loss on real sensor physics)**. Our models contain no stochastic latent noise vectors: they only sharpen features backed by physical gradient evidence in the input photons, guaranteeing 100% mathematical reproducibility."*
+> *"In Earth Observation, **hallucination is unacceptable and dangerous** — a generative diffusion or GAN model can invent non-existent roads, fake vehicles, or altered agricultural crop textures to satisfy an adversarial discriminator. We intentionally use **deterministic regression CNNs (like our Sentinel2SRNet)** trained with a composite loss (`L1 + 2.5*Sobel_edge + 5.0*mean_drift`). Our models contain no stochastic latent noise vectors: they only sharpen features backed by physical gradient evidence in the input photons, guaranteeing 100% mathematical reproducibility."*
 
 ---
 
@@ -26,7 +26,7 @@ This quick-reference guide prepares you for common questions asked by professors
 **Answer:**
 > *"When training on cross-satellite pairs (Sentinel-2 to VENµS), naive models cheat by simply shifting global brightness/contrast to match the target sensor rather than learning spatial edge details. We eliminated this through two architectural innovations:
 > 1. **Locked-Chroma Luminance (YCrCb) Processing**: We decouple luminance (Y) from chroma (Cr, Cb), running deep edge enhancement strictly on the luminance channel while preserving the original authentic color channels with **0.00 color drift**.
-> 2. **Zero-Mean Residual Learning**: In custom architectures, forcing residuals to have a spatial mean of zero mathematically prevents the network from learning global sensor brightness offsets."*
+> 2. **Zero-Mean Residual Learning & Radiometric Alignment**: In our custom Sentinel2SRNet, forcing residuals to have a spatial mean of zero mathematically prevents the network from learning global sensor brightness offsets, and we perform mean/std matching on the sensor data to align the radiometry."*
 
 ---
 
@@ -48,3 +48,33 @@ This quick-reference guide prepares you for common questions asked by professors
 > - **ESPCN**: Sub-pixel convolution (~10 ms), ultra-fast lightweight edge upsampling.
 > - **FSRCNN**: Balanced fast CNN (~18 ms), features shrinking and expanding convolutions for real-time interactive mapping.
 > - **EDSR**: Deep Residual network with 16 residual blocks (~43M parameters), removing batch normalization to maximize dynamic range and structural edge fidelity."*
+
+---
+
+### Q8: Which model powers your live demo?
+**Answer:**
+> *"Sentinel2SRNet (custom PyTorch, satellite-trained) is the default. FSRCNN/ESPCN/EDSR are OpenCV pretrained baselines kept for latency-accuracy comparison."*
+
+---
+
+### Q9: Is the unsharp mask post-processing honest?
+**Answer:**
+> *"Yes — unsharp masking is applied only to OpenCV baseline models as a clearly disclosed post-processing step. The custom Sentinel2SRNet outputs learned edge reconstruction directly, with no additional sharpening."*
+
+---
+
+### Q10: How do you handle uncertainty?
+**Answer:**
+> *"TTA variance: the variance across 8 geometric ensemble outputs provides a per-pixel confidence signal. High variance = model is uncertain about that region. Visualized as a confidence/uncertainty heatmap."*
+
+---
+
+### Q11: Is the live map showing real Sentinel-2 data?
+**Answer:**
+> *"No — it fetches Esri World Imagery tiles as a visual proxy. The 10m simulation is created by 2x bicubic downsampling. For real Sentinel-2 validation, we use SEN2VENµS benchmark patches with actual paired ground truth."*
+
+---
+
+### Q12: Is your NDVI real?
+**Answer:**
+> *"It's a VARI (Visible Atmospherically Resistant Index) proxy computed from RGB bands only. Real NDVI requires NIR Band 8, which isn't available in this RGB pipeline. The UI labels this as an RGB-derived proxy."*

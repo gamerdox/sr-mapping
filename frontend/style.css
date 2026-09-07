@@ -261,6 +261,23 @@ button.active {
   border-color: #a855f7;
 }
 
+.btn-cyan {
+  background: #0e7490;
+  border-color: #06b6d4;
+  color: #fff;
+}
+.btn-cyan:hover {
+  background: #06b6d4;
+  color: #0b1120;
+  border-color: #22d3ee;
+}
+.btn-cyan.active {
+  background: #22d3ee;
+  color: #0b1120;
+  border-color: #67e8f9;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+}
+
 .btn-success {
   background: #14532d;
   border-color: #16a34a;

@@ -1,4 +1,4 @@
-﻿# Project Documentation: Super-Resolution Mapping on Sentinel-2 Satellite Imagery
+# Project Documentation: Super-Resolution Mapping on Sentinel-2 Satellite Imagery
 
 > **A Complete, Plain-English Guide to the AI Satellite Super-Resolution Studio**  
 > *Everything you need to understand the purpose, technology, datasets, architecture, and real-world impact of this project.*
@@ -86,38 +86,38 @@ During initial development, when we trained a model on raw cross-satellite pairs
 3. When tested on urban cities like Paris, the result was a hazy greenish tint across the buildings.
 
 ### How We Solved It: The Locked-Chroma ($Y\text{CrCb}$) Engine
-To eliminate this cross-sensor bias once and for all, we implemented our **Zero-Color-Drift Engine**:
-1. We transform the image from standard RGB into the **$Y\text{CrCb}$ color space**, which separates:
-   * **$Y$ (Luminance)**: Black-and-white brightness and structural details.
-   * **$Cr, Cb$ (Chroma)**: Pure color information (red-difference and blue-difference).
-2. The AI network runs its deep edge reconstruction **strictly on the $Y$ (Luminance) channel**.
-3. We lock the original color channels ($Cr, Cb$) in place and merge them back together.
-4. **The result**: **0.00 color drift**. The enhanced satellite image retains 100% of its authentic original colors while gaining sharp building outlines and road borders.
+To eliminate this cross-sensor bias once and for all, we implemented our **Zero-Color-Drift Engine**, which consists of two parts:
+1. **YCrCb Chroma Locking (Core Innovation)**: We transform the image from standard RGB into the **$Y\text{CrCb}$ color space**, separating luminance ($Y$) from chroma ($Cr, Cb$). The AI network runs its deep edge reconstruction strictly on the $Y$ (Luminance) channel. We lock the original color channels ($Cr, Cb$) in place and merge them back together. **The result**: **0.00 color drift**.
+2. **Post-Processing Sharpening**: For the OpenCV baseline models (FSRCNN, ESPCN, EDSR), an unsharp mask is applied to the Y channel as a clearly labeled post-processing step to enhance luminance sharpness. The primary `Sentinel2SRNet` does NOT use this unsharp mask, as it learns edge reconstruction directly.
+
+### Radiometric Alignment and Custom Training
+The custom `Sentinel2SRNet` model was rigorously trained to handle these differences without shortcuts:
+* **Training Data**: Trained on the SEN2VENµS FGMANAUS site (Manaus rainforest).
+* **Radiometric Alignment**: Achieved via mean/std matching of the sensor data.
+* **Composite Loss**: The model uses a robust loss function: `L1 + 2.5 * Sobel_edge + 5.0 * mean_drift`. This directly penalizes color drift and enforces true edge learning.
 
 ---
 
-## 6. The 3 AI Model Architectures
+## 6. The AI Model Architectures
 
-The project provides three pre-trained, production-ready architectures selectable via the user interface:
+The project provides models divided into two categories: a primary custom-trained model, and three pre-trained baseline models used for latency-accuracy comparison.
 
-```
-                  ┌───────── Input: Blurry 10m Satellite Image ─────────┐
-                  │                                                     │
-                  ▼                                                     ▼
-     ⚡ FSRCNN (~18 ms)                   🔬 EDSR (~3.3 s)             🚀 ESPCN (~8 ms)
-  Fast 4-layer CNN (~12k params)    16 Residual Blocks (~43M params)   Sub-Pixel Conv (~21k params)
-  Interactive real-time map preview   Maximum structural edge sharpness  Ultra-fast edge upscaler
-```
+### Primary Model (Custom Trained on Satellite Data)
+1. **`Sentinel2SRNet` (Default)**:
+   * **Design**: PyTorch residual CNN trained on SEN2VENµS paired Sentinel-2/VENµS data with L1 + Sobel edge + zero-mean residual loss.
+   * **Best For**: Real-world satellite enhancement. This model is trained specifically on satellite data.
 
-1. **`FSRCNN` (Fast Super-Resolution CNN)**:
+### Baseline Models (OpenCV Pretrained, Generic)
+These models are NOT trained on satellite data. They are kept for latency-accuracy comparison.
+2. **`FSRCNN` (Fast Super-Resolution CNN)**:
    * **Speed**: ~18 ms on CPU.
    * **Design**: Uses 4 convolutional layers that shrink feature channels in low-resolution space before upscaling at the very end.
    * **Best For**: Smooth, real-time panning across the global world map.
-2. **`EDSR` (Enhanced Deep Residual Networks)**:
+3. **`EDSR` (Enhanced Deep Residual Networks)**:
    * **Speed**: ~3.3 s on CPU.
    * **Design**: 16 deep residual blocks containing over 43 million parameters. It removes unnecessary batch normalization layers to preserve high dynamic range radiometric depth.
    * **Best For**: Scientific inspection where maximum structural detail on buildings, runways, and agricultural plots is required.
-3. **`ESPCN` (Efficient Sub-Pixel CNN)**:
+4. **`ESPCN` (Efficient Sub-Pixel CNN)**:
    * **Speed**: ~8.4 ms on CPU.
    * **Design**: Extracts feature maps in low-resolution space and rearranges them into higher resolution using sub-pixel shuffle convolutions.
 
@@ -233,6 +233,14 @@ docker compose up --build
 
 ### Q: Why does EDSR take ~3 seconds while FSRCNN takes ~18 milliseconds?
 **A:** FSRCNN has 4 convolutional layers and ~12,000 parameters. EDSR has 16 deep residual blocks and over **43,000,000 parameters**. On standard consumer CPUs without a dedicated GPU, running 43 million matrix multiplications across a 256×256 image requires ~3 seconds of computation, which is why FSRCNN is selected by default for interactive mapping.
+
+---
+
+## 13. Limitations & Future Work
+
+* **Single-Biome Validation**: Current model validation is primarily focused on the FGMANAUS (Manaus rainforest) site. We are working on expanding validation to urban and diverse agricultural patches.
+* **Spectral Proxies (No true NIR)**: The NDVI and CIR remote sensing modes are derived purely from RGB bands as a visual proxy (`VARI`). Real NDVI and CIR require the Near-Infrared (NIR) Band 8, which is not available in our current RGB pipeline.
+* **Live Map Data Source**: The interactive Leaflet world map uses Esri World Imagery tiles as a visual proxy for demonstration purposes; it does not pull live Sentinel-2 multispectral data directly.
 
 ---
 
