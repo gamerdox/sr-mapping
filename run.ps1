@@ -1,7 +1,7 @@
-﻿# PowerShell Launcher for Sentinel-2 Super-Resolution Studio
+# PowerShell Launcher for Sentinel-2 Super-Resolution Studio
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $ScriptDir) {
-    $ScriptDir = "C:\Users\Vanaparthi\.gemini\antigravity\scratch\sr-mapping"
+    $ScriptDir = (Get-Location).Path
 }
 Set-Location $ScriptDir
 

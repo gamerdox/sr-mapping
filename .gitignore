@@ -27,8 +27,11 @@ checkpoints/*.pb
 !checkpoints/EDSR_x2.pb
 !checkpoints/sr_sentinel2_2x.pt
 
-# OS / IDE
+# OS / IDE / Temporary
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+~$*
+*.tmp
+
