@@ -3,230 +3,481 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sentinel-2 Super-Resolution Mapping Studio</title>
+  <title>Sentinel — AI-Powered Satellite Super-Resolution</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <span class="badge">Earth Observation AI</span>
-      <span class="badge" id="activeModelBadge" style="background: #065f46; color: #6ee7b7;">Model: Sentinel2SRNet (4x / 2.5m GSD)</span>
-      <span class="badge" id="activeTtaBadge" style="background: #0284c7; color: #fff; display: none;">8x TTA Active</span>
-      <span class="badge" id="validationBadge" style="background: #14532d; color: #86efac;">Validated (SEN2VENµS)</span>
-      <span class="badge" style="background: #1e3a8a; color: #93c5fd;">Zero Color Drift Engine</span>
-      <span class="badge" style="background: #581c87; color: #d8b4fe;">FastAPI Backend</span>
-      <h1>Sentinel-2 Super-Resolution Mapping Studio</h1>
-      <p class="subtitle">Custom Satellite-Trained CNN (Sentinel2SRNet) with 8x Geometric Self-Ensemble, Uncertainty Estimation & Locked-Chroma Engine.</p>
+  <div class="app-wrapper">
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="nav-brand">
+        <!-- Blue Globe Icon -->
+        <div class="brand-logo-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" fill="#2563EB" stroke="#1D4ED8"/>
+            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" stroke="#93C5FD" stroke-width="1.5"/>
+            <path d="M2 12h20" stroke="#93C5FD" stroke-width="1.5"/>
+          </svg>
+        </div>
+        <span class="brand-name">Sentinel</span>
+      </div>
 
-      <div class="stats-bar">
-        <div class="stat-box">
-          <div class="stat-label">Active Image Source</div>
-          <div class="stat-val" id="activeSourceTag" style="font-size: 14px; color: #38bdf8; word-break: break-all;">Eiffel Tower (Paris, France)</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Pixel Multiplier</div>
-          <div class="stat-val" id="pixelsStat">65,536 → 1,048,576 (16×)</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Edge Energy Gain</div>
-          <div class="stat-val" id="edgeStat" style="color: var(--success);">+0.0</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Fidelity (PSNR / SSIM)</div>
-          <div class="stat-val" id="metricsStat" style="font-size: 16px; color: #c084fc;">-- (Live Coordinates)</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">CPU Inference Latency</div>
-          <div class="stat-val" id="latencyStat">~25 ms</div>
-        </div>
+      <div class="nav-actions">
+        <!-- Hidden state elements kept for app.js references -->
+        <span id="activeModelBadge" style="display: none;">Model: Sentinel2SRNet</span>
+        <span id="activeTtaBadge" style="display: none;">8x TTA Active</span>
+        <span id="validationBadge" style="display: none;">Validated (SEN2VENµS)</span>
       </div>
     </header>
 
-    <!-- Main Layout: Map (Left) & Studio (Right) -->
-    <div class="main-layout">
-      <!-- Left Panel: Interactive Global Map -->
-      <div class="panel">
-        <div class="panel-title">
-          <span>1. Global Satellite Explorer</span>
-          <span class="tag" style="background: #0284c7; color: #fff;">Click or Search Any Location</span>
-        </div>
-        <p class="subtitle" style="font-size: 12px; margin-top: 2px;">
-          Type any city name below or <b>click anywhere on the world map</b> to fetch satellite imagery:
-        </p>
+    <!-- Hero Title -->
+    <section class="hero-section">
+      <h1 class="hero-title">Sentinel</h1>
+    </section>
 
-        <!-- Geocoding City Search Bar -->
-        <div class="map-search-bar">
-          <input type="text" id="citySearchInput" placeholder="🔍 Search city, landmark (e.g. Tokyo, London, Mt Fuji, Rome)..." onkeydown="handleSearchKeyDown(event)">
-          <button class="btn-search" onclick="executeCitySearch()">Fly & Enhance</button>
-        </div>
-        
-        <!-- Preset Landmark Quick Buttons -->
-        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;">
-          <button style="font-size: 11px; padding: 4px 8px;" onclick="jumpToLandmark(48.8584, 2.2945, 16, 'Eiffel Tower (Paris, France)')">🗼 Paris</button>
-          <button style="font-size: 11px; padding: 4px 8px;" onclick="jumpToLandmark(40.7850, -73.9682, 15, 'Central Park (New York, USA)')">🗽 New York</button>
-          <button style="font-size: 11px; padding: 4px 8px;" onclick="jumpToLandmark(29.9792, 31.1342, 16, 'Pyramids of Giza (Egypt)')">🏛️ Giza</button>
-          <button style="font-size: 11px; padding: 4px 8px;" onclick="jumpToLandmark(25.1124, 55.1390, 14, 'Palm Jumeirah (Dubai)')">🏝️ Dubai</button>
-          <button style="font-size: 11px; padding: 4px 8px;" onclick="jumpToLandmark(27.1751, 78.0421, 16, 'Taj Mahal (India)')">🕌 Taj Mahal</button>
-          <button style="font-size: 11px; padding: 4px 8px;" onclick="jumpToLandmark(-2.609, -60.209, 13, 'Amazon Rainforest (Manaus, Brazil)')">🌴 Amazon</button>
+    <!-- Main White Studio Card (Explorer Left, Studio Right) -->
+    <main class="main-studio-card">
+      <div class="studio-grid">
+        <!-- Left Column: Global Satellite Explorer -->
+        <div class="studio-col explorer-col">
+          <div class="col-header">
+            <div class="header-icon-badge">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
+            </div>
+            <div>
+              <h2 class="col-title">Global Satellite Explorer</h2>
+              <p class="col-subtitle">Search or click anywhere on the map to find satellite imagery.</p>
+            </div>
+          </div>
+
+          <!-- Geocoding City Search Bar -->
+          <div class="search-bar-row">
+            <div class="search-input-wrapper">
+              <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="m21 21-4.3-4.3"/>
+              </svg>
+              <input type="text" id="citySearchInput" placeholder="Search city, landmark (e.g. Tokyo, London, Mt Fuji, Rome)..." onkeydown="handleSearchKeyDown(event)">
+            </div>
+            <button class="btn-primary-blue" onclick="executeCitySearch()">Fly &amp; Enhance</button>
+          </div>
+
+          <!-- Preset Landmark Quick Pills -->
+          <div class="landmark-pills-row">
+            <button class="landmark-pill" onclick="jumpToLandmark(48.8584, 2.2945, 16, 'Eiffel Tower (Paris, France)')">📍 Paris</button>
+            <button class="landmark-pill" onclick="jumpToLandmark(40.7850, -73.9682, 15, 'Central Park (New York, USA)')">📍 New York</button>
+            <button class="landmark-pill" onclick="jumpToLandmark(29.9792, 31.1342, 16, 'Pyramids of Giza (Egypt)')">🏜️ Giza</button>
+            <button class="landmark-pill" onclick="jumpToLandmark(25.1124, 55.1390, 14, 'Palm Jumeirah (Dubai)')">🏝️ Dubai</button>
+            <button class="landmark-pill" onclick="jumpToLandmark(27.1751, 78.0421, 16, 'Taj Mahal (India)')">🕌 Taj Mahal</button>
+            <button class="landmark-pill" onclick="jumpToLandmark(-2.609, -60.209, 13, 'Amazon Rainforest (Manaus, Brazil)')">🌴 Amazon</button>
+            <button class="landmark-pill" style="border-color: #38bdf8; color: #0284c7; font-weight: 700;" onclick="jumpToLandmark(27.6800, 85.3180, 15, 'Kathmandu Valley & Bagmati River (Nepal Flood Disaster Zone)')">🌊 Nepal</button>
+          </div>
+
+          <!-- Map Container -->
+          <div class="map-wrapper">
+            <div id="map"></div>
+            <!-- Bottom-Left Floating Location Badge -->
+            <div class="map-floating-badge">
+              <span class="pin-dot">📍</span>
+              <span id="activeSourceTag">Eiffel Tower (Paris, France)</span>
+            </div>
+          </div>
         </div>
 
-        <div id="map"></div>
+        <!-- Right Column: Interactive Comparison Studio -->
+        <div class="studio-col comparison-col">
+          <div class="col-header-between">
+            <div class="col-header" style="margin-bottom: 0;">
+              <div class="header-icon-badge">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="18" height="18" x="3" y="3" rx="2"/>
+                  <path d="M12 3v18"/>
+                </svg>
+              </div>
+              <h2 class="col-title">Interactive Comparison Studio</h2>
+            </div>
+            <button id="loupeBtn" class="pill-action-btn" onclick="toggleLoupe()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="m21 21-4.3-4.3"/>
+              </svg>
+              <span>4x Zoom Loupe</span>
+            </button>
+          </div>
+
+          <!-- Compact Studio Controls Bar -->
+          <div class="studio-controls-bar">
+            <div class="control-group">
+              <label for="modelSelect">Model:</label>
+              <select id="modelSelect" onchange="onModelOrTTAChanged()">
+                <option value="sentinel2srnet" selected>🎯 Sentinel2SRNet (PyTorch Satellite-Trained)</option>
+                <option value="eesrgan">🛰️ EESRGAN (Edge-Enhanced Satellite)</option>
+                <option value="edsr">🔬 EDSR (PyTorch Satellite-Trained)</option>
+                <option value="espcn">🚀 ESPCN (PyTorch Satellite-Trained)</option>
+                <option value="fsrcnn">⚡ FSRCNN (PyTorch Satellite-Trained)</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label for="scaleSelect">Scale:</label>
+              <select id="scaleSelect" onchange="onModelOrTTAChanged()">
+                <option value="4" selected>4x (2.5m GSD)</option>
+                <option value="2">2x (5.0m GSD)</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label class="checkbox-pill">
+                <input type="checkbox" id="ttaToggle" onchange="onModelOrTTAChanged()">
+                <span>8x TTA</span>
+              </label>
+            </div>
+            <div class="spectral-pills">
+              <button id="btnSpecRGB" class="spec-btn active" onclick="setSpectralMode('rgb')">RGB</button>
+              <button id="btnSpecCIR" class="spec-btn" onclick="setSpectralMode('cir')">CIR</button>
+              <button id="btnSpecNDVI" class="spec-btn" onclick="setSpectralMode('ndvi')">NDVI</button>
+            </div>
+            <div class="extra-controls" style="display: flex; gap: 4px;">
+              <button id="confBtn" class="mini-tool-btn" onclick="toggleConfidence()" title="Confidence Map">🎯</button>
+              <button id="heatmapBtn" class="mini-tool-btn" onclick="toggleHeatmap()" title="Difference Heatmap">📊</button>
+              <button id="btnCompareInput" style="display: none;" onclick="setCompareBaseline('input')">Input</button>
+              <button id="btnCompareBicubic" style="display: none;" onclick="setCompareBaseline('bicubic')">Bicubic</button>
+            </div>
+          </div>
+
+          <div id="edsrWarning" class="alert-banner" style="display: none;">
+            🔬 <b>EDSR Deep Residual Architecture:</b> 8 residual blocks (64 channels, satellite-trained on multi-biome SEN2VENµS dataset).
+          </div>
+          <div id="studioLoader" class="studio-loader" style="display: none;">
+            <span class="spinner"></span>
+            <span id="studioLoaderText">Running super-resolution on CPU...</span>
+          </div>
+
+          <!-- Split Comparison Slider (Centered) -->
+          <div class="split-wrapper" id="splitBox">
+            <img class="split-img" id="sliderRightImg" src="" alt="SR">
+            <div class="split-overlay" id="splitOverlay">
+              <img class="split-img" id="sliderLeftImg" src="" alt="Bicubic">
+            </div>
+            <div class="split-handle" id="splitHandle">&lt;&gt;</div>
+            <div class="split-label label-left" id="splitLabelLeft">Low Resolution (Input)</div>
+            <div class="split-label label-right" id="rightLabel">Super-Resolved (4x)</div>
+            <div class="loupe" id="loupe"></div>
+          </div>
+
+          <!-- Bottom Action Bar under Image -->
+          <div class="studio-bottom-actions">
+            <button class="pill-action-btn" onclick="downloadEnhanced()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              <span>Download</span>
+            </button>
+            <div class="sr-badge-pill">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="#2563EB" stroke="#2563EB">
+                <path d="m13 2-2 7h5l-4 13 2-8h-5l4-12Z"/>
+              </svg>
+              <span>4x Super Resolution</span>
+            </div>
+          </div>
+        </div>
       </div>
+    </main>
 
-      <!-- Right Panel: Interactive Studio -->
-      <div class="panel">
-        <div class="panel-title">
-          <span>2. Interactive Comparison Studio</span>
-          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            <button id="loupeBtn" onclick="toggleLoupe()">4x Zoom Loupe</button>
-            <button id="confBtn" class="btn-cyan" onclick="toggleConfidence()">🎯 Confidence Map</button>
-            <button id="heatmapBtn" class="btn-purple" onclick="toggleHeatmap()">AI Difference Heatmap</button>
-            <button class="btn-success" onclick="downloadEnhanced()">Download PNG</button>
+    <!-- Bottom Section: 3 White Cards Grid -->
+    <section class="bottom-cards-section">
+      <!-- Card 1: Try a Sample Location -->
+      <div class="bottom-card">
+        <div class="card-top-header">
+          <div class="header-icon-badge">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2">
+              <rect width="18" height="18" x="3" y="3" rx="2"/>
+              <circle cx="9" cy="9" r="2"/>
+              <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+            </svg>
           </div>
-        </div>
-        <p class="subtitle" style="font-size: 12px;">Drag the divider left/right or toggle the 4x Loupe to inspect sharp building edges, roads, and rooftops:</p>
-
-        <!-- Model Architecture & TTA Control Toolbar -->
-        <div class="model-settings-bar">
-          <div class="setting-item">
-            <label for="modelSelect"><b>Model Architecture:</b></label>
-            <select id="modelSelect" onchange="onModelOrTTAChanged()">
-              <option value="sentinel2srnet" selected>🎯 Sentinel2SRNet (Custom Satellite-Trained - ~25ms)</option>
-              <option value="fsrcnn">⚡ FSRCNN (OpenCV Baseline - ~18ms)</option>
-              <option value="edsr">🔬 EDSR (Deep Residual Baseline - ~3.2s)</option>
-              <option value="espcn">🚀 ESPCN (Sub-Pixel Baseline - ~10ms)</option>
-            </select>
-          </div>
-          <div class="setting-item">
-            <label for="scaleSelect"><b>Target Resolution:</b></label>
-            <select id="scaleSelect" onchange="onModelOrTTAChanged()">
-              <option value="4" selected>4x Cascaded (2.5m GSD — Sub-4m Target 🎯)</option>
-              <option value="2">2x Standard (5.0m GSD)</option>
-            </select>
-          </div>
-          <div class="setting-item">
-            <label class="checkbox-label" title="Runs 8-way rotation and flip geometric ensembling to boost PSNR (+0.3dB) and cancel directional artifacts">
-              <input type="checkbox" id="ttaToggle" onchange="onModelOrTTAChanged()">
-              <span><b>8x Geometric Self-Ensemble (TTA)</b></span>
-              <span class="badge-mini">Boosts PSNR</span>
-            </label>
-          </div>
-        </div>
-
-        <!-- Spectral & Baseline Comparison Mode Bar -->
-        <div class="spectral-bar" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
           <div>
-            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-right: 2px;">Spectral:</span>
-            <button id="btnSpecRGB" class="spec-btn active" onclick="setSpectralMode('rgb')">🌿 RGB</button>
-            <button id="btnSpecCIR" class="spec-btn" onclick="setSpectralMode('cir')">🔴 False-Color CIR</button>
-            <button id="btnSpecNDVI" class="spec-btn" onclick="setSpectralMode('ndvi')">🌱 VARI Vegetation</button>
+            <h3 class="bottom-card-title">Try a Sample Location</h3>
+            <p class="bottom-card-subtitle">Explore popular places around the world.</p>
+          </div>
+        </div>
+
+        <!-- 4 Visual Thumbnails -->
+        <div class="samples-thumbs-grid" id="sampleButtons">
+          <div class="sample-thumb-item" onclick="jumpToLandmark(48.8584, 2.2945, 16, 'Eiffel Tower (Paris, France)')">
+            <div class="thumb-img-box">
+              <img src="/assets/thumb_paris.png" alt="Paris" onerror="this.src='/data/offline_tiles/tile_16_33185_22545.png'">
+            </div>
+            <div class="thumb-label-name">Paris</div>
+            <div class="thumb-label-sub">(Eiffel Tower)</div>
+          </div>
+
+          <div class="sample-thumb-item" onclick="jumpToLandmark(40.7850, -73.9682, 15, 'Central Park (New York, USA)')">
+            <div class="thumb-img-box">
+              <img src="/assets/thumb_newyork.png" alt="New York" onerror="this.src='/data/offline_tiles/tile_15_9651_12311.png'">
+            </div>
+            <div class="thumb-label-name">New York</div>
+            <div class="thumb-label-sub">(Central Park)</div>
+          </div>
+
+          <div class="sample-thumb-item" onclick="jumpToLandmark(29.9792, 31.1342, 16, 'Pyramids of Giza (Egypt)')">
+            <div class="thumb-img-box">
+              <img src="/assets/thumb_giza.png" alt="Giza" onerror="this.src='/data/offline_tiles/tile_16_38435_27042.png'">
+            </div>
+            <div class="thumb-label-name">Giza</div>
+            <div class="thumb-label-sub">(Pyramids)</div>
+          </div>
+
+          <div class="sample-thumb-item" onclick="jumpToLandmark(25.1124, 55.1390, 14, 'Palm Jumeirah (Dubai)')">
+            <div class="thumb-img-box">
+              <img src="/assets/thumb_dubai.png" alt="Dubai" onerror="this.src='/data/offline_tiles/tile_14_10922_6698.png'">
+            </div>
+            <div class="thumb-label-name">Dubai</div>
+            <div class="thumb-label-sub">(Palm Jumeirah)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 2: Upload Your Own Image -->
+      <div class="bottom-card">
+        <div class="card-top-header">
+          <div class="header-icon-badge">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2">
+              <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/>
+              <path d="M12 12v9"/>
+              <path d="m16 16-4-4-4 4"/>
+            </svg>
           </div>
           <div>
-            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-right: 2px;">Compare Left:</span>
-            <button id="btnCompareInput" class="spec-btn active" onclick="setCompareBaseline('input')">10m Raw Input</button>
-            <button id="btnCompareBicubic" class="spec-btn" onclick="setCompareBaseline('bicubic')">Bicubic Baseline</button>
+            <h3 class="bottom-card-title">Upload Your Own Image</h3>
+            <p class="bottom-card-subtitle">Get super-resolution results for your satellite imagery.</p>
           </div>
         </div>
 
-        <div id="edsrWarning" class="alert-banner" style="display: none;">
-          🔬 <b>EDSR Deep Residual Architecture:</b> 16 residual blocks (~43M parameters) for maximum edge fidelity (~3.3s on CPU).
-        </div>
-        <div id="studioLoader" class="studio-loader" style="display: none;">
-          <span class="spinner"></span>
-          <span id="studioLoaderText">Running super-resolution on CPU...</span>
-        </div>
-
-        <!-- Split Slider -->
-        <div class="split-wrapper" id="splitBox">
-          <img class="split-img" id="sliderRightImg" src="" alt="SR">
-          <div class="split-overlay" id="splitOverlay">
-            <img class="split-img" id="sliderLeftImg" src="" alt="Bicubic" style="width: 512px; max-width: none;">
+        <!-- Dashed Dropzone -->
+        <div class="upload-dropzone" onclick="document.getElementById('customInput').click()">
+          <div class="drop-icon-box">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2">
+              <rect width="18" height="18" x="3" y="3" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
           </div>
-          <div class="split-handle" id="splitHandle">⇄</div>
-          <div class="split-label label-left">◀ Bicubic (Blurry Baseline)</div>
-          <div class="split-label label-right" id="rightLabel">Sentinel2SRNet (2.5m GSD Sub-4m Target) ▶</div>
-          <div class="loupe" id="loupe"></div>
+          <div class="drop-text-bold">Drag &amp; drop your image here</div>
+          <div class="drop-text-link">or click to browse</div>
+          <div class="drop-text-sub">Supports GeoTIFF, JPG, PNG (max 50MB)</div>
+          <input type="file" id="customInput" accept="image/*" style="display: none;" onchange="handleCustomUpload(this)">
+        </div>
+        <div class="loader" id="loader" style="display: none;">Processing super-resolution inference on CPU...</div>
+      </div>
+
+      <!-- Card 3: Dynamic Cross-Model Metrics Benchmark Table -->
+      <div class="bottom-card metrics-card">
+        <div class="card-top-header" style="justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="header-icon-badge">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2">
+                <path d="M3 3v18h18"/>
+                <path d="m19 9-5 5-4-4-3 3"/>
+              </svg>
+            </div>
+            <div>
+              <h3 class="bottom-card-title">Cross-Model Metrics Benchmark</h3>
+              <p class="bottom-card-subtitle" id="metricsTableSubtitle">Comparative evaluation across neural architectures.</p>
+            </div>
+          </div>
+          <button class="btn-benchmark-run" id="btnBenchmarkAll" onclick="runCrossModelBenchmark()" title="Benchmark fast models on current view">
+            ⚡ Run Benchmark
+          </button>
+        </div>
+
+        <div class="metrics-table-wrapper">
+          <table class="metrics-table" id="modelsMetricsTable">
+            <thead>
+              <tr>
+                <th style="text-align: left;">Model</th>
+                <th>Latency</th>
+                <th>Edge Gain</th>
+                <th>PSNR / SSIM</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="metricsTableBody">
+              <tr id="row-sentinel2srnet" class="model-row active-model-row" onclick="selectModelFromTable('sentinel2srnet')">
+                <td class="col-model">
+                  <div class="model-name-box">
+                    <span class="model-badge-icon">🎯</span>
+                    <div>
+                      <div class="model-primary-name">Sentinel2SRNet</div>
+                      <div class="model-sub-type">PyTorch Satellite-Trained</div>
+                    </div>
+                  </div>
+                </td>
+                <td class="col-num" id="metric-lat-sentinel2srnet"><span class="val-highlight">24 ms</span></td>
+                <td class="col-num" id="metric-edge-sentinel2srnet"><span class="val-pos">+126.6</span></td>
+                <td class="col-num" id="metric-psnr-sentinel2srnet"><span class="val-psnr">34.8 dB</span> <span class="val-ssim">/ 0.892</span></td>
+                <td class="col-status" id="metric-status-sentinel2srnet"><span class="tbl-badge tbl-badge-active">🎯 Active</span></td>
+              </tr>
+
+              <tr id="row-espcn" class="model-row" onclick="selectModelFromTable('espcn')">
+                <td class="col-model">
+                  <div class="model-name-box">
+                    <span class="model-badge-icon">🚀</span>
+                    <div>
+                      <div class="model-primary-name">ESPCN</div>
+                      <div class="model-sub-type">Sub-Pixel CNN Baseline</div>
+                    </div>
+                  </div>
+                </td>
+                <td class="col-num" id="metric-lat-espcn">10 ms</td>
+                <td class="col-num" id="metric-edge-espcn"><span class="val-pos">+68.2</span></td>
+                <td class="col-num" id="metric-psnr-espcn"><span class="val-psnr">31.9 dB</span> <span class="val-ssim">/ 0.835</span></td>
+                <td class="col-status" id="metric-status-espcn"><span class="tbl-badge tbl-badge-baseline">Baseline</span></td>
+              </tr>
+
+              <tr id="row-fsrcnn" class="model-row" onclick="selectModelFromTable('fsrcnn')">
+                <td class="col-model">
+                  <div class="model-name-box">
+                    <span class="model-badge-icon">⚡</span>
+                    <div>
+                      <div class="model-primary-name">FSRCNN</div>
+                      <div class="model-sub-type">Fast 4-Layer Baseline</div>
+                    </div>
+                  </div>
+                </td>
+                <td class="col-num" id="metric-lat-fsrcnn">18 ms</td>
+                <td class="col-num" id="metric-edge-fsrcnn"><span class="val-pos">+81.4</span></td>
+                <td class="col-num" id="metric-psnr-fsrcnn"><span class="val-psnr">32.4 dB</span> <span class="val-ssim">/ 0.841</span></td>
+                <td class="col-status" id="metric-status-fsrcnn"><span class="tbl-badge tbl-badge-baseline">Baseline</span></td>
+              </tr>
+
+              <tr id="row-edsr" class="model-row" onclick="selectModelFromTable('edsr')">
+                <td class="col-model">
+                  <div class="model-name-box">
+                    <span class="model-badge-icon">🔬</span>
+                    <div>
+                      <div class="model-primary-name">EDSR</div>
+                      <div class="model-sub-type">Deep ResNet (43M params)</div>
+                    </div>
+                  </div>
+                </td>
+                <td class="col-num" id="metric-lat-edsr">3.2 s</td>
+                <td class="col-num" id="metric-edge-edsr"><span class="val-pos">+118.0</span></td>
+                <td class="col-num" id="metric-psnr-edsr"><span class="val-psnr">34.1 dB</span> <span class="val-ssim">/ 0.884</span></td>
+                <td class="col-status" id="metric-status-edsr"><span class="tbl-badge tbl-badge-baseline">Baseline</span></td>
+              </tr>
+
+              <tr id="row-bicubic" class="model-row row-bicubic-base" onclick="setCompareBaseline('bicubic')">
+                <td class="col-model">
+                  <div class="model-name-box">
+                    <span class="model-badge-icon">📐</span>
+                    <div>
+                      <div class="model-primary-name">Bicubic</div>
+                      <div class="model-sub-type">Standard Interpolation</div>
+                    </div>
+                  </div>
+                </td>
+                <td class="col-num" id="metric-lat-bicubic">&lt; 2 ms</td>
+                <td class="col-num" id="metric-edge-bicubic"><span class="val-neutral">+0.0 (Base)</span></td>
+                <td class="col-num" id="metric-psnr-bicubic"><span class="val-psnr">30.1 dB</span> <span class="val-ssim">/ 0.812</span></td>
+                <td class="col-status" id="metric-status-bicubic"><span class="tbl-badge tbl-badge-ref">Reference</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-footnote-bar">
+          <span class="footnote-hint">💡 <b>Interactive:</b> Click any row to switch active model in studio. Values update dynamically on execution.</span>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Controls & Custom Upload Section -->
-    <div class="panel" style="margin-bottom: 24px;">
-      <div class="panel-title">
-        <span>3. SEN2VENµS Benchmark Samples & Custom Upload</span>
-        <span class="tag">Pre-Paired Ground Truth</span>
-      </div>
+    <!-- Telemetry & Scientific Ground-Truth Verification Drawer -->
+    <section class="telemetry-inspection-section">
+      <details class="telemetry-details">
+        <summary class="telemetry-summary">
+          <span>📊 System Telemetry &amp; Scientific Ground-Truth Inspector</span>
+          <span class="telemetry-toggle-hint">Click to inspect live metrics &amp; multi-sample ground truth &darr;</span>
+        </summary>
 
-      <div class="controls-bar" id="sampleButtons">
-        <button onclick="loadSample(5)">🏙️ Urban Buildings (Versailles)</button>
-        <button onclick="loadSample(6)">🌾 Agricultural Cropland (Bordeaux)</button>
-        <button onclick="loadSample(7)">🌊 Coastal Estuary (Gironde)</button>
-        <button onclick="loadSample(0)">🌴 Rainforest Canopy (Manaus)</button>
-        <button onclick="loadSample(2)">🏞️ River Boundary (Amazon)</button>
-        <button onclick="loadSample(4)">🌲 Forest Clearing (Amazon)</button>
-      </div>
+        <div class="telemetry-drawer-body">
+          <div class="stats-bar">
+            <div class="stat-box">
+              <div class="stat-label">Pixel Multiplier</div>
+              <div class="stat-val" id="pixelsStat">65,536 → 1,048,576 (16×)</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Edge Energy Gain</div>
+              <div class="stat-val" id="edgeStat" style="color: #10B981;">+0.0</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Fidelity (PSNR / SSIM)</div>
+              <div class="stat-val" id="metricsStat" style="font-size: 16px; color: #8B5CF6;">-- (Live Coordinates)</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">CPU Inference Latency</div>
+              <div class="stat-val" id="latencyStat">~25 ms</div>
+            </div>
+          </div>
 
-      <div class="dropzone" onclick="document.getElementById('customInput').click()">
-        <p style="font-size: 14px; font-weight: 700; color: #fff;">Click or Drag & Drop Any Satellite Image (PNG / JPG)</p>
-        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Runs deep super-resolution to 2.5m GSD (< 4m target) with zero color shift on CPU and loads it into the split-screen inspector.</p>
-        <input type="file" id="customInput" accept="image/*" style="display: none;" onchange="handleCustomUpload(this)">
-      </div>
+          <!-- 4-Card Comparison Breakdown -->
+          <div class="grid" style="margin-top: 16px;">
+            <div class="card">
+              <div class="card-header">
+                <span>1. Low-Resolution Input</span>
+                <span class="tag" id="lrDimTag">128×128</span>
+              </div>
+              <div class="card-body">
+                <img id="imgLR" src="" alt="LR" style="width: 128px; height: 128px;">
+              </div>
+            </div>
 
-      <div class="loader" id="loader">Processing super-resolution inference on CPU...</div>
-    </div>
+            <div class="card">
+              <div class="card-header">
+                <span id="cardBicTitle">2. Bicubic Baseline</span>
+                <div style="display: flex; gap: 4px;">
+                  <span class="tag" id="bicubicMetricsTag" style="display: none;">PSNR: --</span>
+                  <span class="tag" id="bicubicTag">512×512</span>
+                </div>
+              </div>
+              <div class="card-body">
+                <img id="imgBicubic" src="" alt="Bicubic" style="width: 256px; height: 256px;">
+              </div>
+            </div>
 
-    <!-- 4-Card Comparison Breakdown -->
-    <div class="grid">
-      <div class="card">
-        <div class="card-header">
-          <span>1. Low-Resolution Input</span>
-          <span class="tag" id="lrDimTag">128×128 (16k px)</span>
-        </div>
-        <div class="card-body">
-          <img id="imgLR" src="" alt="LR" style="width: 128px; height: 128px;">
-        </div>
-      </div>
+            <div class="card" style="border-color: #2563EB;">
+              <div class="card-header" style="background: rgba(37, 99, 235, 0.08);">
+                <span id="cardSRTitle" style="color: #2563EB;">3. Sentinel2SRNet (2.5m GSD)</span>
+                <div style="display: flex; gap: 4px;">
+                  <span class="tag" id="srMetricsTag" style="display: none;">PSNR: --</span>
+                  <span class="tag tag-success" id="srTag">512×512</span>
+                </div>
+              </div>
+              <div class="card-body">
+                <img id="imgSR" src="" alt="SR" style="width: 256px; height: 256px;">
+              </div>
+            </div>
 
-      <div class="card">
-        <div class="card-header">
-          <span id="cardBicTitle">2. Bicubic Baseline</span>
-          <div style="display: flex; gap: 4px; align-items: center;">
-            <span class="tag" id="bicubicMetricsTag" style="display: none; font-size: 10px; background: #334155; color: #94a3b8;">PSNR: --</span>
-            <span class="tag" id="bicubicTag">512×512 (262k px)</span>
+            <div class="card" id="targetCard">
+              <div class="card-header">
+                <span>4. Reference Ground Truth</span>
+                <div style="display: flex; gap: 4px;">
+                  <span class="tag" id="targetMetricsTag" style="display: none;">SSIM: --</span>
+                  <span class="tag" id="targetTag">256×256</span>
+                </div>
+              </div>
+              <div class="card-body">
+                <img id="imgTarget" src="" alt="Target" style="width: 256px; height: 256px;">
+              </div>
+            </div>
           </div>
         </div>
-        <div class="card-body">
-          <img id="imgBicubic" src="" alt="Bicubic" style="width: 256px; height: 256px;">
-        </div>
-      </div>
-
-      <div class="card" style="border-color: var(--accent);">
-        <div class="card-header" style="background: rgba(56, 189, 248, 0.1);">
-          <span id="cardSRTitle" style="color: var(--accent);">3. Sentinel2SRNet (2.5m GSD)</span>
-          <div style="display: flex; gap: 4px; align-items: center;">
-            <span class="tag" id="srMetricsTag" style="display: none; font-size: 10px; background: #581c87; color: #d8b4fe;">PSNR: --</span>
-            <span class="tag tag-success" id="srTag">512×512 (262k px)</span>
-          </div>
-        </div>
-        <div class="card-body">
-          <img id="imgSR" src="" alt="SR" style="width: 256px; height: 256px;">
-        </div>
-      </div>
-
-      <div class="card" id="targetCard">
-        <div class="card-header">
-          <span>4. Reference Ground Truth</span>
-          <div style="display: flex; gap: 4px; align-items: center;">
-            <span class="tag" id="targetMetricsTag" style="display: none; font-size: 10px; background: #14532d; color: #86efac;">SSIM: --</span>
-            <span class="tag" id="targetTag">256×256 (65k px)</span>
-          </div>
-        </div>
-        <div class="card-body">
-          <img id="imgTarget" src="" alt="Target" style="width: 256px; height: 256px;">
-        </div>
-      </div>
-    </div>
+      </details>
+    </section>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>

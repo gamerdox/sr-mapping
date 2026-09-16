@@ -26,15 +26,19 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import torch
 import torch.nn.functional as F_torch
-from src.models.sr_model import Sentinel2SRNet, load_model as load_pytorch_model
+from src.models.sr_model import Sentinel2SRNet
+from src.models.edsr import EDSR
+from src.models.espcn import ESPCN
+from src.models.fsrcnn import FSRCNN
+from src.models.eesrgan import EESRGAN
 from src.models.metrics import calculate_psnr, calculate_ssim
 from src.data.dataset import get_demo_image_paths
 from functools import lru_cache
 
 app = FastAPI(
     title="Sentinel-2 Super-Resolution API & Studio",
-    description="Multi-Model Deep Super-Resolution (FSRCNN, EDSR, ESPCN) with 8x Geometric Self-Ensemble & Zero-Color-Drift Engine.",
-    version="3.1.0",
+    description="Multi-Model Deep Super-Resolution (Sentinel2SRNet, EESRGAN, EDSR, ESPCN, FSRCNN) with 8x Geometric Self-Ensemble & Zero-Color-Drift Engine.",
+    version="3.3.0",
 )
 
 app.add_middleware(
@@ -53,52 +57,76 @@ CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 DEMO_DIR = PROJECT_ROOT / "data" / "sen2venus_sample" / "demo_patches"
 RESULTS_DIR = PROJECT_ROOT / "results"
 
-# Available Models Registry
+# Available Models Registry (All Satellite-Trained PyTorch Architectures with fallback support)
 AVAILABLE_MODELS: dict[str, dict] = {
     "sentinel2srnet": {
         "id": "sentinel2srnet",
-        "name": "Sentinel2SRNet (Custom Trained)",
-        "file": "sr_sentinel2_2x.pt",
+        "name": "Sentinel2SRNet (Custom Residual CNN)",
+        "pt_files": ["sr_sentinel2_2x_best.pt", "sr_sentinel2_2x.pt"],
+        "pb_files": [],
         "scale": 2,
         "engine_type": "pytorch",
         "description": "Custom residual CNN trained on SEN2VENµS paired Sentinel-2/VENµS data with L1 + Sobel edge + zero-mean residual loss.",
         "typical_latency": "~25 ms (CPU)",
-        "badge": "🎯 Satellite-Trained (SEN2VENµS)",
+        "badge": "🎯 Sentinel2SRNet (PyTorch Satellite-Trained)",
         "is_default": True,
     },
-    "fsrcnn": {
-        "id": "fsrcnn",
-        "name": "FSRCNN (Pretrained Baseline)",
-        "file": "FSRCNN_x2.pb",
+    "eesrgan": {
+        "id": "eesrgan",
+        "name": "EESRGAN (Edge-Enhanced Dense RRDB)",
+        "pt_files": ["eesrgan_sentinel2_2x_best.pt", "eesrgan_sentinel2_2x.pt"],
+        "pb_files": [],
         "scale": 2,
-        "engine_type": "opencv",
-        "description": "OpenCV pretrained fast 4-layer CNN (~12k params). Generic baseline, not satellite-trained.",
-        "typical_latency": "~18 ms",
-        "badge": "⚡ Baseline FSRCNN (~18ms)",
+        "engine_type": "pytorch",
+        "description": "Edge-Enhanced Super-Resolution GAN for satellite imagery with dual Dense-Mask branches & 2nd-order Laplacian edge refinement.",
+        "typical_latency": "~60 ms (CPU)",
+        "badge": "🛰️ EESRGAN (Edge-Enhanced Satellite)",
         "is_default": False,
     },
     "edsr": {
         "id": "edsr",
-        "name": "EDSR (Pretrained Baseline)",
-        "file": "EDSR_x2.pb",
+        "name": "EDSR (Enhanced Deep Super-Resolution)",
+        "pt_files": ["edsr_sentinel2_2x_best.pt", "edsr_sentinel2_2x.pt"],
+        "pb_files": ["EDSR_x2.pb"],
         "scale": 2,
-        "engine_type": "opencv",
-        "description": "OpenCV pretrained deep 16-residual-block network (~43M params). Generic baseline, not satellite-trained.",
-        "typical_latency": "~3.2 s (CPU)",
-        "badge": "🔬 Baseline EDSR (Deep Residual)",
+        "engine_type": "pytorch",
+        "description": "Enhanced Deep Super-Resolution network (8 residual blocks, 64 channels) trained on SEN2VENµS multi-biome data.",
+        "typical_latency": "~45 ms (CPU)",
+        "badge": "🔬 EDSR (PyTorch Satellite-Trained)",
         "is_default": False,
     },
     "espcn": {
         "id": "espcn",
-        "name": "ESPCN (Pretrained Baseline)",
-        "file": "ESPCN_x2.pb",
+        "name": "ESPCN (Sub-Pixel Convolutional Network)",
+        "pt_files": ["espcn_sentinel2_2x_best.pt", "espcn_sentinel2_2x.pt"],
+        "pb_files": ["ESPCN_x2.pb"],
         "scale": 2,
-        "engine_type": "opencv",
-        "description": "OpenCV pretrained sub-pixel convolutional network. Generic baseline, not satellite-trained.",
-        "typical_latency": "~10 ms",
-        "badge": "🚀 Baseline ESPCN (~10ms)",
+        "engine_type": "pytorch",
+        "description": "Efficient Sub-Pixel Convolutional Network (~21k params) trained on SEN2VENµS multi-biome data.",
+        "typical_latency": "~10 ms (CPU)",
+        "badge": "🚀 ESPCN (PyTorch Satellite-Trained)",
         "is_default": False,
     },
+    "fsrcnn": {
+        "id": "fsrcnn",
+        "name": "FSRCNN (Fast Super-Resolution CNN)",
+        "pt_files": ["fsrcnn_sentinel2_2x_best.pt", "fsrcnn_sentinel2_2x.pt"],
+        "pb_files": ["FSRCNN_x2.pb"],
+        "scale": 2,
+        "engine_type": "pytorch",
+        "description": "Fast Super-Resolution CNN (~12.5k params hourglass deconv) trained on SEN2VENµS multi-biome data.",
+        "typical_latency": "~12 ms (CPU)",
+        "badge": "⚡ FSRCNN (PyTorch Satellite-Trained)",
+        "is_default": False,
+    },
+}
+
+MODEL_BUILDERS = {
+    "sentinel2srnet": lambda: Sentinel2SRNet(scale_factor=2),
+    "eesrgan": lambda: EESRGAN(scale=2, nb=8),
+    "edsr": lambda: EDSR(scale=2),
+    "espcn": lambda: ESPCN(scale_factor=2),
+    "fsrcnn": lambda: FSRCNN(scale_factor=2),
 }
 
 LOADED_ENGINES: dict[str, dnn_superres.DnnSuperResImpl] = {}
@@ -109,27 +137,49 @@ PYTORCH_MODELS: dict[str, torch.nn.Module] = {}
 def startup_event():
     global LOADED_ENGINES, PYTORCH_MODELS
     for key, info in AVAILABLE_MODELS.items():
-        model_path = CHECKPOINTS_DIR / info["file"]
-        if model_path.exists():
-            if info.get("engine_type") == "pytorch":
+        loaded = False
+        # 1. Try PyTorch .pt checkpoints first (best epoch checkpoint preferred)
+        pt_candidates = info.get("pt_files", [])
+        for pt_name in pt_candidates:
+            pt_path = CHECKPOINTS_DIR / pt_name
+            if pt_path.exists():
                 try:
-                    model = load_pytorch_model(str(model_path))
-                    model.eval()
-                    PYTORCH_MODELS[key] = model
-                    print(f"[Backend] Successfully loaded PyTorch {info['name']} from {model_path.name}")
+                    builder = MODEL_BUILDERS.get(key)
+                    if builder:
+                        model = builder()
+                        state_dict = torch.load(str(pt_path), map_location="cpu", weights_only=True)
+                        model.load_state_dict(state_dict)
+                        model.eval()
+                        PYTORCH_MODELS[key] = model
+                        info["engine_type"] = "pytorch"
+                        info["loaded_file"] = pt_name
+                        print(f"[Backend] Successfully loaded PyTorch {info['name']} from {pt_name}")
+                        loaded = True
+                        break
                 except Exception as e:
-                    print(f"[Backend Error] Failed to load PyTorch {info['name']}: {e}")
-            else:
-                try:
-                    engine = dnn_superres.DnnSuperResImpl_create()
-                    engine.readModel(str(model_path))
-                    engine.setModel(key, info["scale"])
-                    LOADED_ENGINES[key] = engine
-                    print(f"[Backend] Successfully loaded OpenCV {info['name']} from {model_path.name}")
-                except Exception as e:
-                    print(f"[Backend Error] Failed to load OpenCV {info['name']}: {e}")
-        else:
-            print(f"[Backend Warning] Model file {model_path.name} not found.")
+                    print(f"[Backend Error] Failed loading PyTorch {pt_name}: {e}")
+
+        # 2. Fallback to OpenCV .pb if PyTorch checkpoint not found or failed
+        if not loaded:
+            pb_candidates = info.get("pb_files", [])
+            for pb_name in pb_candidates:
+                pb_path = CHECKPOINTS_DIR / pb_name
+                if pb_path.exists():
+                    try:
+                        engine = dnn_superres.DnnSuperResImpl_create()
+                        engine.readModel(str(pb_path))
+                        engine.setModel(key, info["scale"])
+                        LOADED_ENGINES[key] = engine
+                        info["engine_type"] = "opencv"
+                        info["loaded_file"] = pb_name
+                        print(f"[Backend] Successfully loaded OpenCV {info['name']} from {pb_name}")
+                        loaded = True
+                        break
+                    except Exception as e:
+                        print(f"[Backend Error] Failed loading OpenCV {pb_name}: {e}")
+
+        if not loaded:
+            print(f"[Backend Warning] No valid checkpoint found for {info['name']}")
 
 
 def pil_to_base64(img: Image.Image) -> str:
@@ -405,10 +455,10 @@ def run_single_sr_pass(
         raw_rgb = (np.clip(sr_np_float, 0.0, 1.0) * 255.0).astype(np.uint8)
         if apply_postprocessing:
             final_rgb = enhance_satellite_clarity(raw_rgb, bic_np)
-            post_proc_type = "PyTorch Sentinel2SRNet + Radiometrically Calibrated MTF Restoration"
+            post_proc_type = f"PyTorch {model_display} + Radiometrically Calibrated MTF Restoration"
         else:
             final_rgb = raw_rgb
-            post_proc_type = "PyTorch Sentinel2SRNet (Raw Radiometric Pass)"
+            post_proc_type = f"PyTorch {model_display} (Raw Radiometric Pass)"
 
     else:
         img_bgr = cv2.cvtColor(np.array(input_pil.convert("RGB")), cv2.COLOR_RGB2BGR)

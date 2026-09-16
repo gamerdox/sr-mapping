@@ -55,6 +55,9 @@ function onModelOrTTAChanged() {
     if (model === 'sentinel2srnet') {
       modelBadge.style.background = '#065f46';
       modelBadge.style.color = '#6ee7b7';
+    } else if (model === 'eesrgan') {
+      modelBadge.style.background = '#4c1d95';
+      modelBadge.style.color = '#e9d5ff';
     } else if (model === 'edsr') {
       modelBadge.style.background = '#7c2d12';
       modelBadge.style.color = '#fdba74';
@@ -568,6 +571,9 @@ function renderData(data) {
   if (targetTagEl) {
     targetTagEl.innerText = `${data.output_dimensions} (Ground Truth Reference)`;
   }
+
+  // Update Cross-Model Metrics Table
+  updateMetricsTableForActive(data);
 }
 
 // 9. Download Enhanced Image
@@ -579,10 +585,156 @@ function downloadEnhanced() {
   link.click();
 }
 
+// 10. Cross-Model Metrics Table Interactivity & Dynamic Benchmarking
+function selectModelFromTable(modelId) {
+  const select = document.getElementById('modelSelect');
+  if (!select) return;
+  if (select.value === modelId) return;
+
+  const option = Array.from(select.options).find(o => o.value === modelId);
+  if (option && !option.disabled) {
+    select.value = modelId;
+    onModelOrTTAChanged();
+  } else if (option && option.disabled) {
+    alert(`Model ${modelId.toUpperCase()} is not loaded on this backend.`);
+  }
+}
+
+function updateMetricsTableForActive(data) {
+  if (!data) return;
+  const modelId = (data.model_id || 'sentinel2srnet').toLowerCase();
+
+  // Highlight active model row
+  const rows = document.querySelectorAll('.model-row');
+  rows.forEach(r => {
+    r.classList.remove('active-model-row');
+    if (!r.classList.contains('row-bicubic-base')) {
+      const st = r.querySelector('.col-status');
+      if (st) st.innerHTML = '<span class="tbl-badge tbl-badge-baseline">Baseline</span>';
+    }
+  });
+
+  const activeRow = document.getElementById(`row-${modelId}`);
+  if (activeRow) {
+    activeRow.classList.add('active-model-row');
+  }
+  const activeStatus = document.getElementById(`metric-status-${modelId}`);
+  if (activeStatus) {
+    activeStatus.innerHTML = '<span class="tbl-badge tbl-badge-active">🎯 Active</span>';
+  }
+
+  // Update live measured latency
+  const latEl = document.getElementById(`metric-lat-${modelId}`);
+  if (latEl && data.latency_ms !== undefined) {
+    latEl.innerHTML = `<span class="val-highlight">${Math.round(data.latency_ms)} ms</span>`;
+  }
+
+  // Update live measured edge gain
+  const edgeEl = document.getElementById(`metric-edge-${modelId}`);
+  if (edgeEl && data.edge_sharpness) {
+    const g = data.edge_sharpness.sharpness_gain;
+    edgeEl.innerHTML = `<span class="val-pos">${g >= 0 ? '+' : ''}${g}</span>`;
+  }
+
+  // Update live PSNR / SSIM or Edge Energy
+  const psnrEl = document.getElementById(`metric-psnr-${modelId}`);
+  if (psnrEl) {
+    if (data.quantitative_metrics) {
+      const p = data.quantitative_metrics.psnr.model_sr_db.toFixed(1);
+      const s = data.quantitative_metrics.ssim.model_sr.toFixed(3);
+      psnrEl.innerHTML = `<span class="val-psnr">${p} dB</span> <span class="val-ssim">/ ${s}</span>`;
+    } else if (data.edge_sharpness) {
+      psnrEl.innerHTML = `<span class="val-psnr">${data.edge_sharpness.model_sr}</span> <span class="val-ssim">lapl</span>`;
+    }
+  }
+
+  // Update Bicubic baseline row
+  if (data.edge_sharpness) {
+    const bicEdgeEl = document.getElementById('metric-edge-bicubic');
+    if (bicEdgeEl) {
+      bicEdgeEl.innerHTML = `<span class="val-neutral">${data.edge_sharpness.bicubic}</span>`;
+    }
+  }
+  if (data.quantitative_metrics) {
+    const bicPsnrEl = document.getElementById('metric-psnr-bicubic');
+    if (bicPsnrEl) {
+      const bp = data.quantitative_metrics.psnr.bicubic_db.toFixed(1);
+      const bs = data.quantitative_metrics.ssim.bicubic.toFixed(3);
+      bicPsnrEl.innerHTML = `<span class="val-psnr">${bp} dB</span> <span class="val-ssim">/ ${bs}</span>`;
+    }
+  }
+}
+
+async function runCrossModelBenchmark() {
+  const btn = document.getElementById('btnBenchmarkAll');
+  const subtitle = document.getElementById('metricsTableSubtitle');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = '⏳ Benchmarking...';
+  }
+  if (subtitle) {
+    subtitle.innerText = 'Evaluating architectures on current view...';
+  }
+
+  const fastModels = ['sentinel2srnet', 'espcn', 'fsrcnn'];
+  const { tta, scale } = getModelParams();
+
+  for (const mId of fastModels) {
+    try {
+      const latEl = document.getElementById(`metric-lat-${mId}`);
+      if (latEl) latEl.innerHTML = '<i>eval...</i>';
+
+      let res = null;
+      if (activeSourceType === 'location' && activeLocationParams) {
+        res = await fetch(`/api/sr/predict-location?lat=${activeLocationParams.lat}&lon=${activeLocationParams.lng}&zoom=${activeLocationParams.zoom}&model=${mId}&tta=${tta}&scale=${scale}`, { method: 'POST' });
+      } else if (activeSourceType === 'sample' && activeSampleId !== null) {
+        res = await fetch(`/api/sr/predict-sample/${activeSampleId}?model=${mId}&tta=${tta}&scale=${scale}`, { method: 'POST' });
+      } else if (activeSourceType === 'upload' && activeUploadFile) {
+        const formData = new FormData();
+        formData.append('file', activeUploadFile);
+        res = await fetch(`/api/sr/predict?return_base64=false&model=${mId}&tta=${tta}&scale=${scale}`, { method: 'POST', body: formData });
+      }
+
+      if (res && res.ok) {
+        const mData = await res.json();
+        if (latEl) latEl.innerHTML = `<span class="val-highlight">${Math.round(mData.latency_ms)} ms</span>`;
+
+        const edgeEl = document.getElementById(`metric-edge-${mId}`);
+        if (edgeEl && mData.edge_sharpness) {
+          const g = mData.edge_sharpness.sharpness_gain;
+          edgeEl.innerHTML = `<span class="val-pos">${g >= 0 ? '+' : ''}${g}</span>`;
+        }
+
+        const psnrEl = document.getElementById(`metric-psnr-${mId}`);
+        if (psnrEl) {
+          if (mData.quantitative_metrics) {
+            const p = mData.quantitative_metrics.psnr.model_sr_db.toFixed(1);
+            const s = mData.quantitative_metrics.ssim.model_sr.toFixed(3);
+            psnrEl.innerHTML = `<span class="val-psnr">${p} dB</span> <span class="val-ssim">/ ${s}</span>`;
+          } else if (mData.edge_sharpness) {
+            psnrEl.innerHTML = `<span class="val-psnr">${mData.edge_sharpness.model_sr}</span> <span class="val-ssim">lapl</span>`;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`Benchmark error for ${mId}:`, err);
+    }
+  }
+
+  if (btn) {
+    btn.disabled = false;
+    btn.innerText = '⚡ Run Benchmark';
+  }
+  if (subtitle) {
+    subtitle.innerText = 'Dynamic comparative evaluation across architectures.';
+  }
+}
+
 // Startup
 window.addEventListener('DOMContentLoaded', async () => {
   await initModelDropdown();
   initMap();
   jumpToLandmark(48.8584, 2.2945, 16, 'Eiffel Tower (Paris, France)');
 });
+
 

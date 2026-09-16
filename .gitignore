@@ -14,6 +14,9 @@ __pycache__/
 # Large dataset archives and raw tensors
 data/sen2venus_sample/*.7z
 data/sen2venus_sample/FGMANAUS/
+data/sen2venus_jpegs/
+data/sen2venus_sample/all_129_jpegs/
+comparison_plates_for_drawio/
 *.pt
 !checkpoints/sr_sentinel2_2x.pt
 
