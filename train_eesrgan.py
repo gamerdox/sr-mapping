@@ -124,7 +124,9 @@ def main():
     parser = argparse.ArgumentParser(description="Train EESRGAN on multi-biome Sentinel-2/VENuS dataset")
     parser.add_argument("--train_dir", type=str, default="data/sen2venus_jpegs/by_split/train_80_percent")
     parser.add_argument("--val_dir", type=str, default="data/sen2venus_jpegs/by_split/test_20_percent")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=200, help="Number of training epochs")
+    parser.add_argument("--start_epoch", type=int, default=1, help="Starting epoch number when resuming")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint .pt to resume training from")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size (e.g. 16 for GPU)")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--device", type=str, default="cuda", help="'cuda' or 'cpu'")
@@ -146,9 +148,11 @@ def main():
     if device.type == "cuda":
         print(f"  GPU Name:         {torch.cuda.get_device_name(0)}")
         print(f"  VRAM Available:   {torch.cuda.get_device_properties(0).total_memory / (1024**3):.2f} GB")
-    print(f"  Epochs:           {args.epochs}")
+    print(f"  Epoch Range:      Epoch {args.start_epoch} -> {args.epochs}")
     print(f"  Batch Size:       {args.batch_size}")
     print(f"  Learning Rate:    {args.lr}")
+    if args.resume:
+        print(f"  Resuming From:    {args.resume}")
     print("=" * 80)
 
     # Output directory
@@ -173,18 +177,42 @@ def main():
 
     # Initialize EESRGAN Model (8 RRDB blocks, 2x scale)
     model = EESRGAN(in_nc=3, out_nc=3, nf=64, nb=8, scale=2).to(device)
+
+    best_val_psnr = -1.0
+    # Resume checkpoint if provided
+    if args.resume:
+        resume_p = Path(args.resume)
+        if not resume_p.exists():
+            # Check relative to checkpoint_dir as fallback
+            if (ckpt_dir / args.resume).exists():
+                resume_p = ckpt_dir / args.resume
+        if resume_p.exists():
+            print(f"\n[Resume] Loading pre-trained weights from {resume_p}...")
+            state_dict = torch.load(str(resume_p), map_location=device, weights_only=True)
+            model.load_state_dict(state_dict)
+            print("[Resume] Weights loaded successfully!")
+            print("[Resume] Calculating baseline validation score across test set...")
+            val_psnr, val_ssim = evaluate(model, val_loader, device)
+            best_val_psnr = val_psnr
+            print(f"[Resume] Baseline Test Metrics -> PSNR: {val_psnr:.2f} dB | SSIM: {val_ssim:.4f}")
+        else:
+            print(f"[Warning] Resume checkpoint {args.resume} not found. Starting fresh.")
+
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    last_epoch_idx = args.start_epoch - 2 if args.start_epoch > 1 else -1
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6, last_epoch=last_epoch_idx)
 
     # Mixed Precision Scaler for high-speed GPU training
     use_amp = (device.type == "cuda")
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    try:
+        scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+    except Exception:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
-    best_val_psnr = -1.0
     start_time = time.time()
 
-    print("\n[Starting Training Loop...]")
-    for epoch in range(1, args.epochs + 1):
+    print(f"\n[Starting Training Loop from Epoch {args.start_epoch} to {args.epochs}...]")
+    for epoch in range(args.start_epoch, args.epochs + 1):
         model.train()
         epoch_loss = 0.0
         epoch_edge_loss = 0.0
@@ -196,7 +224,12 @@ def main():
 
             optimizer.zero_grad()
 
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            try:
+                autocast_ctx = torch.amp.autocast('cuda', enabled=use_amp)
+            except Exception:
+                autocast_ctx = torch.cuda.amp.autocast(enabled=use_amp)
+
+            with autocast_ctx:
                 # Detailed forward pass to get intermediate edge features
                 sr, base, learned_lap, base_lap = model.forward_detailed(lr)
 
