@@ -199,6 +199,8 @@ def main():
             print(f"[Warning] Resume checkpoint {args.resume} not found. Starting fresh.")
 
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    for pg in optimizer.param_groups:
+        pg['initial_lr'] = args.lr
     last_epoch_idx = args.start_epoch - 2 if args.start_epoch > 1 else -1
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6, last_epoch=last_epoch_idx)
 
