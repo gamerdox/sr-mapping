@@ -27,6 +27,7 @@ from src.models.edsr import EDSR
 from src.models.espcn import ESPCN
 from src.models.fsrcnn import FSRCNN
 from src.models.slimdiffsr import SlimDiffSR
+from src.models.swin2_mose import Swin2MoSEModel
 
 DATA_DIR = ROOT_DIR / "data" / "sen2venus_jpegs" / "by_split" / "test_20_percent"
 LR_DIR = DATA_DIR / "1_input_sentinel2_10m"
@@ -92,6 +93,11 @@ def main():
             "model_fn": lambda: SlimDiffSR(scale=2),
             "ckpt": CHECKPOINTS_DIR / "slimdiffsr_sentinel2_2x_best.pt",
             "fake_dir": DATA_DIR / "fake_slimdiffsr",
+        },
+        "Swin2MoSE": {
+            "model_fn": lambda: Swin2MoSEModel(scale=2, in_chans=3, img_size=64),
+            "ckpt": CHECKPOINTS_DIR / "swin2_mose_sentinel2_2x_best.pt",
+            "fake_dir": DATA_DIR / "fake_swin2_mose",
         },
     }
 

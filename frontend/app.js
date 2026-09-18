@@ -55,6 +55,9 @@ function onModelOrTTAChanged() {
     if (model === 'sentinel2srnet') {
       modelBadge.style.background = '#065f46';
       modelBadge.style.color = '#6ee7b7';
+    } else if (model === 'swin2_mose') {
+      modelBadge.style.background = '#581c87';
+      modelBadge.style.color = '#f3e8ff';
     } else if (model === 'slimdiffsr') {
       modelBadge.style.background = '#0f766e';
       modelBadge.style.color = '#99f6e4';

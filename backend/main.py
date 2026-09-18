@@ -32,14 +32,15 @@ from src.models.espcn import ESPCN
 from src.models.fsrcnn import FSRCNN
 from src.models.eesrgan import EESRGAN
 from src.models.slimdiffsr import SlimDiffSR
+from src.models.swin2_mose import Swin2MoSEModel
 from src.models.metrics import calculate_psnr, calculate_ssim
 from src.data.dataset import get_demo_image_paths
 from functools import lru_cache
 
 app = FastAPI(
     title="Sentinel-2 Super-Resolution API & Studio",
-    description="Multi-Model Deep Super-Resolution (Sentinel2SRNet, SlimDiffSR, EESRGAN, EDSR, ESPCN, FSRCNN) with 8x Geometric Self-Ensemble & Zero-Color-Drift Engine.",
-    version="3.4.0",
+    description="Multi-Model Deep Super-Resolution (Sentinel2SRNet, Swin2-MoSE, SlimDiffSR, EESRGAN, EDSR, ESPCN, FSRCNN) with 8x Geometric Self-Ensemble & Zero-Color-Drift Engine.",
+    version="3.5.0",
 )
 
 app.add_middleware(
@@ -132,6 +133,18 @@ AVAILABLE_MODELS: dict[str, dict] = {
         "badge": "⚡ SlimDiffSR (Distilled Diffusion)",
         "is_default": False,
     },
+    "swin2_mose": {
+        "id": "swin2_mose",
+        "name": "Swin2-MoSE (Swin Transformer v2 + MoE)",
+        "pt_files": ["swin2_mose_sentinel2_2x_best.pt", "swin2_mose_sentinel2_2x_epoch70.pt", "swin2_mose_sentinel2_2x_latest.pt"],
+        "pb_files": [],
+        "scale": 2,
+        "engine_type": "pytorch",
+        "description": "Swin Transformer v2 with Mixture of Spatial Experts (MoE-SM per-example routing) designed for Remote Sensing SISR (Rossi et al., 2025).",
+        "typical_latency": "~65 ms (CPU)",
+        "badge": "🌌 Swin2-MoSE (Transformer + MoE)",
+        "is_default": False,
+    },
 }
 
 MODEL_BUILDERS = {
@@ -141,6 +154,7 @@ MODEL_BUILDERS = {
     "espcn": lambda: ESPCN(scale_factor=2),
     "fsrcnn": lambda: FSRCNN(scale_factor=2),
     "slimdiffsr": lambda: SlimDiffSR(scale=2),
+    "swin2_mose": lambda: Swin2MoSEModel(scale=2, in_chans=3, img_size=64),
 }
 
 LOADED_ENGINES: dict[str, dnn_superres.DnnSuperResImpl] = {}
