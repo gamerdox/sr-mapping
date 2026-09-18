@@ -31,14 +31,15 @@ from src.models.edsr import EDSR
 from src.models.espcn import ESPCN
 from src.models.fsrcnn import FSRCNN
 from src.models.eesrgan import EESRGAN
+from src.models.slimdiffsr import SlimDiffSR
 from src.models.metrics import calculate_psnr, calculate_ssim
 from src.data.dataset import get_demo_image_paths
 from functools import lru_cache
 
 app = FastAPI(
     title="Sentinel-2 Super-Resolution API & Studio",
-    description="Multi-Model Deep Super-Resolution (Sentinel2SRNet, EESRGAN, EDSR, ESPCN, FSRCNN) with 8x Geometric Self-Ensemble & Zero-Color-Drift Engine.",
-    version="3.3.0",
+    description="Multi-Model Deep Super-Resolution (Sentinel2SRNet, SlimDiffSR, EESRGAN, EDSR, ESPCN, FSRCNN) with 8x Geometric Self-Ensemble & Zero-Color-Drift Engine.",
+    version="3.4.0",
 )
 
 app.add_middleware(
@@ -119,6 +120,18 @@ AVAILABLE_MODELS: dict[str, dict] = {
         "badge": "⚡ FSRCNN (PyTorch Satellite-Trained)",
         "is_default": False,
     },
+    "slimdiffsr": {
+        "id": "slimdiffsr",
+        "name": "SlimDiffSR (1-Step Distilled Diffusion)",
+        "pt_files": ["slimdiffsr_sentinel2_2x_best.pt", "slimdiffsr_sentinel2_2x_iter100k.pt", "slimdiffsr_sentinel2_2x_latest.pt"],
+        "pb_files": [],
+        "scale": 2,
+        "engine_type": "pytorch",
+        "description": "Distilled 1-step diffusion architecture with Directional Convolution Blocks (DCB) and Channel Attention for remote sensing super-resolution.",
+        "typical_latency": "~30 ms (CPU)",
+        "badge": "⚡ SlimDiffSR (Distilled Diffusion)",
+        "is_default": False,
+    },
 }
 
 MODEL_BUILDERS = {
@@ -127,6 +140,7 @@ MODEL_BUILDERS = {
     "edsr": lambda: EDSR(scale=2),
     "espcn": lambda: ESPCN(scale_factor=2),
     "fsrcnn": lambda: FSRCNN(scale_factor=2),
+    "slimdiffsr": lambda: SlimDiffSR(scale=2),
 }
 
 LOADED_ENGINES: dict[str, dnn_superres.DnnSuperResImpl] = {}

@@ -26,6 +26,7 @@ from src.models.eesrgan import EESRGAN
 from src.models.edsr import EDSR
 from src.models.espcn import ESPCN
 from src.models.fsrcnn import FSRCNN
+from src.models.slimdiffsr import SlimDiffSR
 
 DATA_DIR = ROOT_DIR / "data" / "sen2venus_jpegs" / "by_split" / "test_20_percent"
 LR_DIR = DATA_DIR / "1_input_sentinel2_10m"
@@ -86,6 +87,11 @@ def main():
             "model_fn": lambda: FSRCNN(scale_factor=2),
             "ckpt": CHECKPOINTS_DIR / "fsrcnn_sentinel2_2x.pt",
             "fake_dir": DATA_DIR / "fake_fsrcnn",
+        },
+        "SlimDiffSR": {
+            "model_fn": lambda: SlimDiffSR(scale=2),
+            "ckpt": CHECKPOINTS_DIR / "slimdiffsr_sentinel2_2x_best.pt",
+            "fake_dir": DATA_DIR / "fake_slimdiffsr",
         },
     }
 
