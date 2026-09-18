@@ -212,15 +212,15 @@ class SparseDispatcher(object):
         stitched = torch.cat(expert_out, 0)
 
         if multiply_by_gates:
-            stitched = stitched.mul(self._nonzero_gates.unsqueeze(1))
+            stitched = stitched.mul(self._nonzero_gates.unsqueeze(1).type_as(stitched))
         zeros = torch.zeros((self._gates.size(0),) + expert_out[-1].shape[1:],
-                            requires_grad=True, device=stitched.device)
+                            requires_grad=True, device=stitched.device, dtype=stitched.dtype)
         # combine samples that have been processed by the same k experts
 
         if cnn_combine is not None:
             return self.smartly_combine(stitched, cnn_combine)
 
-        combined = zeros.index_add(0, self._batch_index, stitched.float())
+        combined = zeros.index_add(0, self._batch_index, stitched.type_as(zeros))
         return combined
 
     def smartly_combine(self, stitched, cnn_combine):
@@ -388,7 +388,7 @@ class MoE(nn.Module):
         top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=1)
         top_k_logits = top_logits[:, :self.k]
         top_k_indices = top_indices[:, :self.k]
-        top_k_gates = self.softmax(top_k_logits)
+        top_k_gates = self.softmax(top_k_logits).type_as(logits)
 
         zeros = torch.zeros_like(logits, requires_grad=True)
         gates = zeros.scatter(1, top_k_indices, top_k_gates)
