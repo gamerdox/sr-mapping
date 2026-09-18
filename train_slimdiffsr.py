@@ -14,14 +14,34 @@ import math
 import argparse
 from pathlib import Path
 import numpy as np
-import cv2
+from PIL import Image
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from skimage.metrics import structural_similarity as ssim
+
+try:
+    from skimage.metrics import structural_similarity as ssim
+except ImportError:
+    def ssim(img1, img2, data_range=255):
+        c1 = (0.01 * data_range) ** 2
+        c2 = (0.03 * data_range) ** 2
+        f1 = img1.astype(np.float64)
+        f2 = img2.astype(np.float64)
+        mu1 = f1.mean()
+        mu2 = f2.mean()
+        s1 = np.var(f1)
+        s2 = np.var(f2)
+        s12 = np.mean((f1 - mu1) * (f2 - mu2))
+        return float(((2 * mu1 * mu2 + c1) * (2 * s12 + c2)) / ((mu1**2 + mu2**2 + c1) * (s1 + s2 + c2)))
 
 # Project Root
 ROOT_DIR = Path(__file__).resolve().parent
@@ -58,13 +78,14 @@ class MultiBiomeSatelliteDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        lr_path, hr_path = self.samples[idx]
-
-        lr_bgr = cv2.imread(str(lr_path))
-        hr_bgr = cv2.imread(str(hr_path))
-
-        lr_rgb = cv2.cvtColor(lr_bgr, cv2.COLOR_BGR2RGB)
-        hr_rgb = cv2.cvtColor(hr_bgr, cv2.COLOR_BGR2RGB)
+        if cv2 is not None:
+            lr_bgr = cv2.imread(str(lr_path))
+            hr_bgr = cv2.imread(str(hr_path))
+            lr_rgb = cv2.cvtColor(lr_bgr, cv2.COLOR_BGR2RGB)
+            hr_rgb = cv2.cvtColor(hr_bgr, cv2.COLOR_BGR2RGB)
+        else:
+            lr_rgb = np.array(Image.open(lr_path).convert("RGB"))
+            hr_rgb = np.array(Image.open(hr_path).convert("RGB"))
 
         if self.augment:
             if np.random.rand() > 0.5:
@@ -131,8 +152,12 @@ def evaluate(model, val_loader, device, max_eval_samples: int = 100):
             sr_np = (np.clip(sr.squeeze(0).permute(1, 2, 0).cpu().numpy(), 0, 1) * 255).astype(np.uint8)
             hr_np = (np.clip(hr.squeeze(0).permute(1, 2, 0).cpu().numpy(), 0, 1) * 255).astype(np.uint8)
 
-            sr_gray = cv2.cvtColor(sr_np, cv2.COLOR_RGB2GRAY)
-            hr_gray = cv2.cvtColor(hr_np, cv2.COLOR_RGB2GRAY)
+            if cv2 is not None:
+                sr_gray = cv2.cvtColor(sr_np, cv2.COLOR_RGB2GRAY)
+                hr_gray = cv2.cvtColor(hr_np, cv2.COLOR_RGB2GRAY)
+            else:
+                sr_gray = np.dot(sr_np[..., :3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
+                hr_gray = np.dot(hr_np[..., :3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
 
             p = compute_psnr_np(hr_gray, sr_gray)
             s = ssim(hr_gray, sr_gray, data_range=255)
