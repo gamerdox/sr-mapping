@@ -17,7 +17,7 @@ data/sen2venus_sample/FGMANAUS/
 data/sen2venus_jpegs/
 data/sen2venus_sample/all_129_jpegs/
 comparison_plates_for_drawio/
-*.pt
+
 !checkpoints/sr_sentinel2_2x.pt
 
 # Keep demo patches for quick testing
