@@ -1,176 +1,128 @@
-# 🔬 Technical Deep-Dive: Open-Source Baseline Super-Resolution Models
+# Technical Deep-Dive: Baseline and Teacher Super-Resolution Models
 
-This document provides an exhaustive, component-by-component technical breakdown of the three open-source deep learning super-resolution baselines (**`FSRCNN`**, **`ESPCN`**, and **`EDSR`**) and classical **`Bicubic Interpolation`** used for comparative evaluation against our custom **`Sentinel2SRNet`**.
+This document provides a technical breakdown of the deep learning baseline and teacher architectures evaluated in our project, alongside classical bicubic interpolation, compared against our custom student network, Sentinel2SRNet.
 
 ---
 
 ## 1. Master Comparative Architectural Matrix
 
-| Engineering Dimension | FSRCNN (Dong et al.) | ESPCN (Shi et al.) | EDSR (Lim et al.) | 🎯 Sentinel2SRNet (Ours) |
-| :--- | :---: | :---: | :---: | :---: |
-| **Historical Venue** | ECCV 2016 | CVPR 2016 | CVPRW / NTIRE 2017 | Custom Trained (2026) |
-| **Primary Design Goal** | Accelerated CPU video SR | Real-time 1080p video | Maximum PSNR accuracy | Satellite Edge & Radiometric SR |
-| **Trainable Parameters** | **12,464** (~12k) | **21,691** (~21k) | **43,090,000** (~43M) | **193,601** (~193k) |
-| **Checkpoint File Size** | 38.1 KB | 84.4 KB | 37,588 KB (37.5 MB) | **765.5 KB** |
-| **Number of Conv Layers** | 8 Conv layers | 3 Conv layers | 34 Conv layers (16 ResBlocks) | 11 Conv layers (4 ResBlocks) |
-| **Activation Functions** | PReLU across all stages | Tanh / ReLU | ReLU (No BatchNorm) | PReLU across all stages |
-| **Upsampling Mechanism** | ConvTranspose2d (Deconv) | PixelShuffle (Sub-Pixel) | PixelShuffle (Sub-Pixel) | PixelShuffle + Bicubic Skip |
-| **Loss Function** | MSE ($L_2$ Loss) | MSE ($L_2$ Loss) | MAE ($L_1$ Loss) | $\mathcal{L}_{L1} + 2.5\mathcal{L}_{\text{Sobel}} + 5.0\mathcal{L}_{\text{drift}}$ |
-| **Training Dataset** | DIV2K / 91 Images | DIV2K / Set14 | DIV2K (800 2K photos) | **SEN2VENµS (Paired Satellite)** |
-| **CPU Inference Latency** | **12.0 ms** | **9.6 ms** | 2,668.7 ms (~2.7 sec) | **38.3 ms** (Interactive) |
-| **Edge Gain on Satellite** | +1.78 | +0.14 (blurry) | **+3.51** (sharp) | **+3.41** (sharp) |
+The table below contrasts the structural properties of each baseline and teacher architecture against our custom Sentinel2SRNet student model:
+
+| Engineering Dimension | FSRCNN (Dong et al.) | ESPCN (Shi et al.) | EDSR (Lim et al.) | EESRGAN (Jakaria et al.) | DCBCNN (Wang et al.) | Sentinel2SRNet (Student) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Architectural Family** | Hourglass CNN | Sub-Pixel CNN | Deep ResNet | Dense RRDB GAN | Directional RCAB | Compact Residual CNN |
+| **Role in Project** | Speed Baseline | Lightweight Baseline | Accuracy Teacher | Detail Teacher | Directional Teacher | Deployable Student |
+| **Trainable Parameters** | 12,464 | 21,691 | 43,090,000 | 37,580,000 | 6,190,000 | 193,601 |
+| **Checkpoint Size** | 38.1 KB | 84.4 KB | 37.6 MB | 37.5 MB | 6.2 MB | 765.5 KB |
+| **Number of Conv Layers** | 8 | 3 | 34 (16 ResBlocks) | 48 (8 RRDB + EESN) | 28 (4 Residual Groups) | 11 (4 ResBlocks) |
+| **Primary Activations** | PReLU | Tanh / ReLU | ReLU | LeakyReLU (0.2) | LeakyReLU (0.1) | PReLU |
+| **Upsampling Method** | Transposed Conv | PixelShuffle | PixelShuffle | Nearest + Conv | PixelShuffle | PixelShuffle + Bicubic Skip |
+| **Loss Function** | MSE (L2) | MSE (L2) | MAE (L1) | L1 + Laplacian Edge | L1 + Sobel + FFT | L1 + 2.5 Sobel + Zero-Mean |
+| **CPU Latency (per tile)**| ~11.7 ms | ~7.6 ms | ~11,290 ms | ~180 ms | ~30 ms | ~38.3 ms |
+| **740-Patch PSNR** | 23.51 dB | 24.59 dB | 24.92 dB | 25.05 dB | 25.15 dB | 24.85 dB |
+| **740-Patch SSIM** | 0.7122 | 0.7746 | 0.7845 | 0.7745 | 0.7769 | 0.7898 |
 
 ---
 
 ## 2. Model 1: FSRCNN (Fast Super-Resolution CNN)
 
-### Historical Context
-Developed by Chao Dong, Chen Change Loy, and Xiaoou Tang (ECCV 2016) to solve the primary computational bottleneck of the seminal SRCNN (2014). SRCNN first upsampled the input via bicubic interpolation, forcing all convolution layers to calculate features on the large grid. FSRCNN introduced an **hourglass pipeline** that performs all feature processing in compact low-resolution space before upscaling at the very end via Deconvolution.
+### Architectural Overview
+FSRCNN was designed by Chao Dong et al. to eliminate the computational bottleneck of early super-resolution networks, which upsampled images prior to convolution. It processes all feature representations in compact low-resolution space through an hourglass structure, upsampling only in the final layer using transposed convolution.
 
-### Layer-by-Layer Architectural Pipeline
-```
-INPUT TENSOR: [B, 1, H, W] (Luminance Y channel)
-  │
-  ├── [1. FEATURE EXTRACTION]: Conv2d(1 -> d=56, kernel=5, padding=2) + PReLU()
-  │    Weights: 56 * 1 * 5 * 5 = 1,400 | Bias: 56 | PReLU: 1  ==> 1,457 params
-  │    Output: [B, 56, H, W]
-  │
-  ├── [2. SHRINKING (Dimensionality Reduction)]: Conv2d(56 -> s=12, kernel=1, padding=0) + PReLU()
-  │    Weights: 12 * 56 * 1 * 1 = 672 | Bias: 12 | PReLU: 1  ==> 685 params
-  │    Output: [B, 12, H, W] (Slashes channels from 56 down to 12)
-  │
-  ├── [3. NON-LINEAR MAPPING]: 4 Identical Cascaded Conv Layers
-  │    Each Layer: Conv2d(12 -> 12, kernel=3, padding=1) + PReLU()
-  │    Weights per layer: 12 * 12 * 3 * 3 = 1,296 | Bias: 12 | PReLU: 1 ==> 1,309 params
-  │    Total for 4 layers: 1,309 * 4 = 5,236 params
-  │    Output: [B, 12, H, W]
-  │
-  ├── [4. EXPANDING]: Conv2d(12 -> d=56, kernel=1, padding=0) + PReLU()
-  │    Weights: 56 * 12 * 1 * 1 = 672 | Bias: 56 | PReLU: 1  ==> 729 params
-  │    Output: [B, 56, H, W] (Restores feature dimensionality to 56)
-  │
-  └── [5. DECONVOLUTION / TRANSPOSED CONVOLUTION]: ConvTranspose2d(56 -> 1, kernel=9, stride=2, padding=4, out_pad=1)
-       Weights: 56 * 1 * 9 * 9 = 4,536 | Bias: 1  ==> 4,537 params
-       Output: [B, 1, 2H, 2W] (Upscaled spatial output)
+### Layer Pipeline
+1. **Feature Extraction**: Conv2d(3 to 56, kernel=5, padding=2) with PReLU activation.
+2. **Shrinking**: Conv2d(56 to 12, kernel=1, padding=0) with PReLU activation, compressing channel depth to reduce arithmetic cost.
+3. **Non-Linear Mapping**: Four cascaded Conv2d(12 to 12, kernel=3, padding=1) layers with PReLU activations.
+4. **Expanding**: Conv2d(12 to 56, kernel=1, padding=0) with PReLU activation, restoring channel depth.
+5. **Deconvolution**: ConvTranspose2d(56 to 3, kernel=9, stride=2, padding=4, output_padding=1).
 
-TOTAL TRAINABLE PARAMETERS: 1,457 + 685 + 5,236 + 729 + 4,537 = 12,644 parameters (~12k)
-```
-
-### Critical Evaluation & Failure Modes in Remote Sensing
-1. **The Deconvolution Checkerboard Artifact**:
-   * Transposed convolution applies a $9\times9$ kernel with stride 2. Because 9 is not evenly divisible by 2, adjacent kernel strides overlap unevenly (some pixels receive 5 filter multiplications while adjacent pixels receive 4).
-   * This creates high-frequency grid-like "checkerboard artifacts" that corrupt linear roads and agricultural parcel boundaries.
-2. **Regression-to-the-Mean Blurring**:
-   * Trained with Mean Squared Error ($L_2$), FSRCNN penalizes large deviations quadratically. When uncertain about high-frequency foliage or building boundaries, it outputs the mathematical average, causing blurred edges (Edge Gain only $+1.78$ vs. $+3.41$ in `Sentinel2SRNet`).
-3. **Cross-Sensor Radiometric Drift**:
-   * FSRCNN operates exclusively on the Y luminance channel and relies on unanchored interpolation for chroma, producing a $+0.70\text{ DN}$ color temperature shift when applied to satellite scenes.
+### Remote Sensing Evaluation and Failure Modes
+* **Checkerboard Artifacts**: Transposed convolution with a 9x9 kernel and stride 2 produces uneven kernel overlap. This manifests as periodic grid artifacts across agricultural fields and linear roadways.
+* **Over-Smoothing**: Optimized strictly under Mean Squared Error (L2 loss), FSRCNN penalizes large pixel deviations quadratically. When faced with stochastic satellite textures like forest canopy, it outputs the statistical mean, resulting in a low SSIM score of 0.7122 and a negative PSNR gain (-0.28 dB) relative to bicubic interpolation.
 
 ---
 
 ## 3. Model 2: ESPCN (Efficient Sub-Pixel CNN)
 
-### Historical Context
-Introduced by Wenzhe Shi et al. (Twitter / Imperial College London, CVPR 2016). ESPCN introduced the **Sub-Pixel Convolutional Layer** (standardized in PyTorch as `nn.PixelShuffle`). It proved that spatial upsampling can be framed as a periodic reordering of latent feature channels, completely eliminating transposed convolution checkerboard artifacts.
+### Architectural Overview
+Introduced by Wenzhe Shi et al., ESPCN introduced the sub-pixel convolutional layer (standardized as PixelShuffle in PyTorch). It demonstrated that spatial upsampling can be achieved through regular channel rearrangement rather than transposed convolutions, avoiding checkerboard artifacts entirely.
 
-### Layer-by-Layer Architectural Pipeline
-```
-INPUT TENSOR: [B, 1, H, W] (Luminance Y channel)
-  │
-  ├── [LAYER 1]: Conv2d(1 -> 64, kernel=5, padding=2) + Tanh() / ReLU()
-  │    Weights: 64 * 1 * 5 * 5 = 1,600 | Bias: 64  ==> 1,664 params
-  │    Output: [B, 64, H, W]
-  │
-  ├── [LAYER 2]: Conv2d(64 -> 32, kernel=3, padding=1) + Tanh() / ReLU()
-  │    Weights: 32 * 64 * 3 * 3 = 18,432 | Bias: 32  ==> 18,464 params
-  │    Output: [B, 32, H, W]
-  │
-  └── [LAYER 3 & SUB-PIXEL SHUFFLE]:
-       Conv2d(32 -> r^2 * C = 4 * 1 = 4, kernel=3, padding=1)
-       Weights: 4 * 32 * 3 * 3 = 1,152 | Bias: 4  ==> 1,156 params
-       Tensor Shape: [B, 4, H, W]
-       nn.PixelShuffle(upscale_factor=r=2):
-       Mathematical Permutation: PS(T)_{x, y, c} = T_{c * r^2 + r * mod(y, r) + mod(x, r)}(floor(x/r), floor(y/r))
-       Final Output Shape: [B, 1, 2H, 2W]
+### Layer Pipeline
+1. **Low-Resolution Feature Map**: Conv2d(3 to 64, kernel=5, padding=2) with Tanh or ReLU activation.
+2. **Intermediate Mapping**: Conv2d(64 to 32, kernel=3, padding=1) with Tanh or ReLU activation.
+3. **Sub-Pixel Projection**: Conv2d(32 to 3 * 2^2 = 12, kernel=3, padding=1), followed by PixelShuffle(upscale_factor=2) to generate the 5m spatial output.
 
-TOTAL TRAINABLE PARAMETERS: 1,664 + 18,464 + 1,156 = 21,284 parameters (Y channel) / 21,691 (RGB variant)
-```
-
-### Critical Evaluation & Failure Modes in Remote Sensing
-1. **Shallow Receptive Field ($9 \times 9$ pixels)**:
-   * ESPCN has only 3 convolutional layers with kernel sizes 5, 3, and 3.
-   * Total receptive field: $5 + (3-1) + (3-1) = 9\text{ pixels}$.
-   * At 10m satellite resolution, 9 pixels corresponds to only $90\text{m} \times 90\text{m}$ on Earth—far too narrow to comprehend large agricultural plots, airport runways, or urban street grids.
-2. **Near-Zero Edge Sharpening ($+0.14$ Edge Gain)**:
-   * Because it lacks residual connections and edge-aware loss terms, its outputs are visually almost indistinguishable from bicubic interpolation.
-3. **Tanh Activation Saturation**:
-   * Tanh saturates near $-1$ and $+1$, causing high-reflectance features (bright metal rooftops, sandbars, cloud edges) to clip and lose dynamic range.
+### Remote Sensing Evaluation and Failure Modes
+* **Limited Receptive Field**: With only three convolutional layers, ESPCN has a receptive field of 9x9 pixels. It cannot capture broad spatial contexts like extended highway corridors, river bends, or large building boundaries.
+* **Performance**: It achieves a PSNR of 24.59 dB (+0.80 dB over bicubic) with fast CPU execution (~7.6 ms), making it a solid lightweight baseline, but it lacks the edge sharpness necessary for cadastral mapping.
 
 ---
 
 ## 4. Model 3: EDSR (Enhanced Deep Residual Networks)
 
-### Historical Context
-Published by Bee Lim et al. (Seoul National University, CVPRW 2017) and winner of the NTIRE 2017 Super-Resolution Challenge. Prior to EDSR, the standard deep residual architecture was SRResNet, which used Batch Normalization (BN) layers inherited from classification networks. The authors discovered that **Batch Normalization is actively detrimental to super-resolution**:
-* BN normalizes features across the mini-batch, destroying absolute pixel luminance and contrast scales.
-* BN consumes $\sim 40\%$ of GPU memory during training.
-* By eliminating BN, EDSR repurposed that memory to expand the network to 256 channels and 16 deep residual blocks.
+### Architectural Overview
+Developed by Bee Lim et al., EDSR won the NTIRE 2017 Super-Resolution Challenge. The authors removed Batch Normalization layers from traditional residual blocks, which freed up substantial GPU memory and prevented the normalization of absolute radiometric values.
 
-### Layer-by-Layer Architectural Pipeline
-```
-INPUT TENSOR: [B, 3, H, W] (Full RGB)
-  ├── [HEAD]: Conv2d(3 -> 256, kernel=3, padding=1) ==> 6,912 + 256 = 7,168 params
-  ├── (Global Residual Connection) ────────────────────────────────────────────────────────┐
-  ▼                                                                                        │
-  ├── [BODY: 16 DEEP RESIDUAL BLOCKS (No BatchNorm, ResScale=0.1)]:                        │
-  │    Each Block: Conv2d(256 -> 256, k=3, p=1) -> ReLU -> Conv2d(256 -> 256, k=3, p=1) -> ResScale(0.1) + Skip
-  │    Parameters per block: (256 * 256 * 3 * 3 + 256) * 2 = 1,180,160 params             │
-  │    Total for 16 Residual Blocks: 16 * 1,180,160 = 18,882,560 params                    │
-  │    (In the 32-block EDSR-large configuration, this totals over 43,000,000 parameters!) │
-  ▼                                                                                        │
-  ├── [BODY FUSION CONV]: Conv2d(256 -> 256, kernel=3, padding=1) ==> 589,824 + 256 = 590,080 params
-  ▼                                                                                        │
-  (+) Long Residual Addition ◄─────────────────────────────────────────────────────────────┘
-  ▼
-  ├── [UPSAMPLER]: Conv2d(256 -> 256 * 4 = 1024, kernel=3, padding=1) ==> 2,359,296 params
-  │    nn.PixelShuffle(scale=2) -> Output Shape: [B, 256, 2H, 2W]
-  └── [TAIL CONV]: Conv2d(256 -> 3, kernel=3, padding=1) ==> 6,912 + 3 = 6,915 params
-       FINAL OUTPUT SHAPE: [B, 3, 2H, 2W]
+### Layer Pipeline
+* **Input Projection**: Conv2d(3 to 256, kernel=3, padding=1).
+* **Deep Residual Body**: 16 Residual Blocks, each containing Conv2d(256 to 256) -> ReLU -> Conv2d(256 to 256) with a residual scaling factor of 0.1 and an identity skip connection.
+* **Global Residual Connection**: Elementwise addition of shallow input features with deep body features.
+* **Reconstruction**: Sub-pixel convolution expanding 256 channels to the final high-resolution grid.
 
-TOTAL TRAINABLE PARAMETERS: 43,090,000 (~43 Million parameters)
-```
-
-### Critical Evaluation & Failure Modes in Remote Sensing
-1. **The 2.6-Second Latency Bottleneck**:
-   * Containing 43 million parameters, EDSR takes **$2,668.7\text{ ms}$** (~2.7 seconds) per $256 \times 256$ tile on CPU.
-   * A web mapping interface fetching 16 tiles simultaneously causes multi-minute browser freezes, making EDSR completely unusable for interactive mapping.
-2. **Massive Storage Footprint ($37.5\text{ MB}$)**:
-   * $50\times$ larger than `Sentinel2SRNet` ($765\text{ KB}$), preventing deployment on edge devices, drones, or field laptops.
-3. **Radiometric Blindness**:
-   * While $L_1$ loss produces sharp boundaries ($+3.51$ edge gain), EDSR lacks a zero-mean spatial constraint, resulting in unconstrained macroscopic brightness drift.
+### Remote Sensing Evaluation and Failure Modes
+* **High Structural Fidelity**: With over 43 million parameters, EDSR captures fine spatial details, achieving 24.92 dB PSNR (+1.13 dB over bicubic) and 0.7845 SSIM.
+* **Severe Latency Bottleneck**: On standard CPU hardware, EDSR requires over 11 seconds per 256x256 patch, rendering it completely unusable for interactive web maps or district-level field operations without dedicated GPU clusters. In our framework, EDSR serves as the Accuracy Teacher.
 
 ---
 
-## 5. Classical Baseline: Bicubic Interpolation
+## 5. Model 4: EESRGAN (Edge-Enhanced Super-Resolution GAN)
 
-### Mathematical Formulation (Keys, 1981)
-$$I(x, y) = \sum_{i=-1}^2 \sum_{j=-1}^2 I(\lfloor x \rfloor + i, \lfloor y \rfloor + j) \cdot W(x - i) \cdot W(y - j)$$
-Where the 1D cubic convolution kernel is:
-$$W(x) = \begin{cases} (a + 2)|x|^3 - (a + 3)|x|^2 + 1, & \text{for } |x| \le 1 \\ a|x|^3 - 5a|x|^2 + 8a|x| - 4a, & \text{for } 1 < |x| < 2 \\ 0, & \text{otherwise} \end{cases}$$
-*(typically with $a = -0.5$)*.
+### Architectural Overview
+Based on Jakaria et al., EESRGAN combines 8 Residual-in-Residual Dense Blocks (RRDB) with a dedicated Edge Enhancement Sub-Network (EESN). The EESN extracts second-order spatial Laplacian edge maps from intermediate representations, applies a dense mask attention mechanism, and reinjects learned edge features into the final reconstruction.
 
-### Fundamental Flaws in Satellite Imagery
-1. **Nyquist-Shannon Limit**: Bicubic interpolation cannot synthesize spatial frequencies beyond the sampling rate of the 10m grid. It merely smooths pixel boundaries into fuzzy transitions.
-2. **Optical PSF Blindness**: It treats blurry pixels as optical truth, completely unable to reverse telescope Point Spread Function blur or atmospheric scattering.
-3. **0 Parameters / 0 Learning**: It has no knowledge of land cover, roads, or architectural boundaries.
+### Remote Sensing Evaluation and Failure Modes
+* **Edge Acuity**: EESRGAN reconstructs sharp building footprints, field borders, and coastal margins, achieving 25.05 dB PSNR (+1.26 dB over bicubic).
+* **Role in Project**: EESRGAN serves as the Detail Teacher in our framework. Its learned edge representations guide the student model, ensuring that fine spatial boundaries are preserved without hallucinating artificial features.
 
 ---
 
-## 6. How Sentinel2SRNet Solves Every Baseline Defect
+## 6. Model 5: DCBCNN (Directional Convolutional Network)
 
-| Baseline Model Defect | Why It Fails in Satellite Mapping | How `Sentinel2SRNet` Solves It |
-| :--- | :--- | :--- |
-| **FSRCNN Checkerboard Artifacts** | Deconvolution causes uneven kernel overlap across roads and crops. | Replaced deconvolution with `nn.PixelShuffle` periodic sub-pixel memory permutation (**0 checkerboard artifacts**). |
-| **ESPCN Blurriness (+0.14 Gain)** | 3 shallow layers ($9 \times 9$ receptive field) cannot resolve terrain features. | Expanded to 11 convolutional layers with 4 residual blocks, achieving **+3.41 edge sharpness gain**. |
-| **EDSR Latency Bottleneck (2.7s)** | 43 Million parameters freeze interactive browser mapping. | Engineered a 48-channel latent architecture (193k params) matching EDSR edge sharpness at **70x faster speed (38.3 ms)**. |
-| **Cross-Sensor Color Drift (+0.70 DN)**| Generic DIV2K models shift solar reflectance, corrupting NDVI/NDWI. | Built-in **zero-mean spatial projection** and YCrCb chroma lock enforce strict **0.00 color temperature bias**. |
-| **Zero Uncertainty Awareness** | Black-box predictions provide no confidence metrics for defense analysts. | Integrated **8-way Geometric Self-Ensemble (TTA)** computes a per-pixel **Variance / Confidence Heatmap**. |
+### Architectural Overview
+Adapted from the SlimDiffSR directional architecture (Wang et al., Wuhan University), DCBCNN uses Directional Convolution Blocks (DCB) paired with Squeeze-and-Excitation (SE) channel attention across 4 residual groups. The DCB replaces standard 3x3 convolutions with parallel 1x3, 3x1, and 3x3 kernels to capture linear structures.
+
+### Remote Sensing Evaluation
+* **Top PSNR Performance**: Achieved the highest PSNR across all 740 test patches (25.15 dB, +1.36 dB over bicubic) and the lowest MSE (244.79). Its directional filters align naturally with satellite imagery features like roads, shorelines, and irrigation ditches.
+* **Role in Project**: DCBCNN acts as the Directional Feature Expert in our multi-teacher distillation framework.
+
+---
+
+## 7. Model 6: Sentinel2SRNet (Student Model)
+
+### Architectural Overview
+Sentinel2SRNet was engineered as a lightweight student model (~193.6K parameters) trained via consensus knowledge distillation from EDSR, EESRGAN, and DCBCNN:
+* **Feature Extraction**: Conv2d(3 to 48, kernel=3, padding=1) with PReLU activation.
+* **Residual Body**: 4 cascaded residual blocks with local identity shortcuts.
+* **Sub-Pixel Tail**: Conv2d(48 to 12, kernel=3, padding=1) with PixelShuffle(2).
+* **Bicubic Addition**: Global skip connection adding bicubic input to the learned residual.
+* **Zero-Mean Constraint**: Forces the residual map to have a spatial mean of zero, guaranteeing zero global brightness shift.
+
+### Remote Sensing Evaluation
+* **Top Structural Similarity**: Achieved the highest SSIM (0.7898, +0.0270 over bicubic), outperforming all baseline and teacher models in edge alignment.
+* **Real-Time CPU Speed**: Runs in roughly 38.3 ms on standard CPU hardware, providing an optimal trade-off between structural fidelity and field deployability.
+
+---
+
+## 8. Quantitative Benchmark Summary (740 Unseen Test Patches)
+
+Evaluation conducted on 740 test patches from the SEN2VENuS dataset evaluated against authentic 5m VENuS ground truth:
+
+| Model Architecture | Checkpoint File | MSE (Lower is better) | PSNR (dB) (Higher is better) | SSIM (Higher is better) | Delta PSNR vs Bicubic (dB) | Delta SSIM vs Bicubic |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Bicubic (Baseline)** | *Interpolation reference* | 338.39 | 23.79 dB | 0.7628 | Baseline | Baseline |
+| **DCBCNN (DCB-RCAB)** | `slimdiffsr_sentinel2_2x_best.pt` | 244.79 | 25.15 dB | 0.7769 | +1.36 dB | +0.0141 |
+| **EESRGAN** | `eesrgan_sentinel2_2x_best.pt` | 246.57 | 25.05 dB | 0.7745 | +1.26 dB | +0.0117 |
+| **EDSR** | `edsr_sentinel2_2x_best.pt` | 257.87 | 24.92 dB | 0.7845 | +1.13 dB | +0.0217 |
+| **Sentinel2SRNet (Student)** | `sr_sentinel2_2x_best.pt` | 265.02 | 24.85 dB | 0.7898 | +1.06 dB | +0.0270 |
+| **ESPCN** | `espcn_sentinel2_2x_best.pt` | 278.95 | 24.59 dB | 0.7746 | +0.80 dB | +0.0118 |
+| **FSRCNN** | `fsrcnn_sentinel2_2x.pt` | 338.20 | 23.51 dB | 0.7122 | -0.28 dB | -0.0506 |

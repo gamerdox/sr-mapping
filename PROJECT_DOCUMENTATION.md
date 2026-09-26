@@ -1,256 +1,217 @@
-# Project Documentation: Super-Resolution Mapping on Sentinel-2 Satellite Imagery
+# Master Project Documentation: Sentinel-2 Satellite Super-Resolution Studio
 
-> **A Complete, Plain-English Guide to the AI Satellite Super-Resolution Studio**  
-> *Everything you need to understand the purpose, technology, datasets, architecture, and real-world impact of this project.*
-
----
-
-## 📖 Table of Contents
-1. [Executive Summary](#1-executive-summary)
-2. [The Real-World Problem: Why Is Free Satellite Imagery Blurry?](#2-the-real-world-problem)
-3. [The Core Mission: The 2x Super-Resolution Advantage](#3-the-core-mission)
-4. [How the Technology Works (In Simple Terms)](#4-how-the-technology-works)
-5. [The Challenge We Overcame: The "Green Tint" Shortcut](#5-the-challenge-we-overcame)
-6. [The 3 AI Model Architectures](#6-the-3-ai-model-architectures)
-7. [Advanced Inference: 8x Geometric Self-Ensemble (TTA)](#7-advanced-inference-8x-tta)
-8. [Remote Sensing Modes: NDVI & False-Color Infrared (CIR)](#8-remote-sensing-modes)
-9. [Resources & Datasets Used](#9-resources--datasets-used)
-10. [System Architecture & Full-Stack Implementation](#10-system-architecture)
-11. [How Anyone Can Run This Project](#11-how-anyone-can-run-this-project)
-12. [Frequently Asked Questions (Viva / Interview Quick-Reference)](#12-frequently-asked-questions)
+Comprehensive technical guide to the AI Satellite Super-Resolution Mapping system developed by Team PixelForge for Smart India Hackathon 2026 (Problem Statement SIH26142, National Technical Research Organisation - NTRO).
 
 ---
 
-## 1. Executive Summary
-
-Every 5 days, the European Space Agency's **Copernicus Sentinel-2** satellites orbit Earth, taking free, publicly accessible pictures of the entire planet. However, because the satellites orbit **786 kilometers up in space**, their optical resolution is limited to **10 meters per pixel**. 
-
-At 10 meters per pixel, a single pixel covers an area the size of an entire house ($100\text{ m}^2$). Narrow roads, small buildings, farm boundaries, and river banks appear blurry and blocky. Higher-resolution satellites (like the 5-meter VENµS satellite or 1-meter commercial satellites) exist, but they are expensive, proprietary, or only cover small parts of the Earth.
-
-**This project solves that problem with Artificial Intelligence:**  
-We built an end-to-end Deep Learning system and interactive Web Studio that takes free 10-meter Sentinel-2 satellite imagery and **super-resolves it 2x to 5-meter resolution (a 4x increase in pixel density)**. This delivers the visual clarity of a high-resolution commercial satellite at **zero hardware cost**.
-
----
-
-## 2. The Real-World Problem
-
-### What does "10-Meter Resolution" mean?
-In digital satellite photography, "resolution" is measured by **Ground Sampling Distance (GSD)**:
-* **Sentinel-2 (10m)**: 1 pixel on your computer screen = a 10m × 10m square ($100\text{ m}^2$) on the ground.
-  * A standard car (~4 meters long) is smaller than a single pixel.
-  * A two-lane road (~6 meters wide) is blended into the surrounding dirt.
-  * A farm parcel boundary is a soft, blurry smudge.
-* **VENµS / Commercial Satellite (5m)**: 1 pixel = a 5m × 5m square ($25\text{ m}^2$) on the ground.
-  * You can clearly see individual building footprints, road edges, drainage ditches, and agricultural rows.
-
-### Why not just buy more high-resolution satellites?
-Building, launching, and insuring an optical Earth-observation satellite costs upwards of **$100M – $300M**. By using software and deep learning to enhance the resolution of existing satellites, we can achieve high-resolution mapping for environmental monitoring, agriculture, and urban planning without launching a single rocket.
+## Table of Contents
+1. [Executive Summary and Problem Context](#1-executive-summary-and-problem-context)
+2. [The Remote Sensing Challenge: Optical Limits of Sentinel-2](#2-the-remote-sensing-challenge-optical-limits-of-sentinel-2)
+3. [The Core Mission: 2x Native and Cascaded 2.5m Sub-4m Super-Resolution](#3-the-core-mission-2x-native-and-cascaded-25m-sub-4m-super-resolution)
+4. [Teacher-Student Knowledge Distillation Framework](#4-teacher-student-knowledge-distillation-framework)
+5. [Consensus Distillation to Eliminate Feature Hallucination](#5-consensus-distillation-to-eliminate-feature-hallucination)
+6. [Radiometric Safety: YCrCb Separation and Zero-Mean Residual Constraint](#6-radiometric-safety-ycrcb-separation-and-zero-mean-residual-constraint)
+7. [8x Test-Time Augmentation (TTA) and Uncertainty Quantification](#7-8x-test-time-augmentation-tta-and-uncertainty-quantification)
+8. [Spectral Analysis Modes: False-Color CIR and NDVI VARI](#8-spectral-analysis-modes-false-color-cir-and-ndvi-vari)
+9. [Quantitative Benchmark Evaluation across 740 Test Patches](#9-quantitative-benchmark-evaluation-across-740-test-patches)
+10. [Multi-Tier Deployment Across Government Echelons](#10-multi-tier-deployment-across-government-echelons)
+11. [Operational Use Cases and Real-World Impact](#11-operational-use-cases-and-real-world-impact)
+12. [Developer Quickstart and Local Execution](#12-developer-quickstart-and-local-execution)
 
 ---
 
-## 3. The Core Mission
+## 1. Executive Summary and Problem Context
 
-| Dimension | Input: Sentinel-2 (Raw) | Output: AI Super-Resolved | Reference: VENµS Satellite |
-| :--- | :--- | :--- | :--- |
-| **Ground Resolution** | 10 meters / pixel | **5 meters / pixel** | 5 meters / pixel |
-| **Pixel Count (128x128 crop)** | 16,384 pixels | **65,536 pixels (4× density)** | 65,536 pixels |
-| **Building Outlines** | Fuzzy / Pixelated | **Sharp & Defined** | Ground Truth |
-| **Cost** | Free (Open Data) | **Free (AI Inference)** | Commercial / Restricted |
+Every 5 days, the European Space Agency Copernicus Sentinel-2 constellation acquires open-access multispectral optical imagery covering the Earth landmass. Because the satellites operate at an orbital altitude of 786 kilometers, their highest optical resolution is limited to 10 meters per pixel ground sample distance (GSD).
 
----
+At 10 meters per pixel:
+* A single pixel encompasses 100 square meters on the ground, roughly the footprint of a suburban house.
+* Narrow asphalt roads, rural pathways, and irrigation canals are blurred into surrounding terrain.
+* Building footprints, industrial boundaries, and agricultural parcels appear blocky and indistinct.
+* In emergency disaster response (floods, landslides) and defense reconnaissance, 10m imagery is insufficient to detect passable vehicle corridors or localized structural collapse.
 
-## 4. How the Technology Works
-
-### Step 1: Why not just use Bicubic Resizing (Standard Zoom)?
-When you zoom in on a photo on your smartphone or in Photoshop, software uses **Bicubic Interpolation**. It averages the values of the 16 nearest pixels to create a smooth transition. 
-* **The drawback**: Bicubic interpolation cannot create new information. It turns blocky pixels into a blurry soup. It cannot reverse the physical optical blur (Point Spread Function) caused by the satellite telescope's lens and the atmosphere.
-
-### Step 2: What Deep Learning Does Instead
-Our Deep Learning Convolutional Neural Networks (CNNs) have analyzed thousands of paired satellite scenes. 
-* They have learned the **physical structural rules** of Earth Observation: how sunlight reflects off the corner of a building, how asphalt roads contrast with soil, and how vegetation boundaries transition into rivers.
-* When given a blurry 10m image, the AI reconstructs the lost high-frequency spatial gradients, snapping fuzzy transitions into crisp, physically accurate edges.
-
-### Step 3: Why We Intentionally Avoided "Generative AI" (GANs / Diffusion)
-Many modern AI art apps use Generative Adversarial Networks (GANs) or Stable Diffusion. **In satellite mapping, Generative AI is dangerous:**
-* A generative model wants to make pictures look pretty; if it sees a blurry smudge, it might **invent a fake road, hallucinate a fake building, or paint fake vehicles**.
-* In disaster response, defense, and property tax mapping, a hallucinated building could lead to real-world errors.
-* **Our Solution**: We use **Deterministic Regression CNNs** ($L_1$ loss). Our models contain zero random noise vectors. Every pixel the model outputs is mathematically bound to real physical photon evidence in the low-resolution input. It produces **100% reproducible, verifiable results**.
+Higher-resolution satellites (such as the CNES 5m VENuS scientific satellite or 0.5m commercial satellites) exist, but they are expensive, proprietary, or lack global continuous revisit. This project uses deep learning to transform free 10m Sentinel-2 imagery into 5m resolution (a 4-fold increase in pixel density) and cascaded 2.5m resolution (a 16-fold increase), bringing commercial-grade mapping clarity to low-resource government desktop PCs at zero acquisition cost.
 
 ---
 
-## 5. The Challenge We Overcame: The "Green Tint" Shortcut
+## 2. The Remote Sensing Challenge: Optical Limits of Sentinel-2
 
-During initial development, when we trained a model on raw cross-satellite pairs (Sentinel-2 to VENµS), we discovered a fascinating flaw common in computer vision:
-1. **Shortcut Learning**: The VENµS sensor happens to have a slightly brighter, warmer lens calibration than Sentinel-2.
-2. Naive AI models realized they could minimize the training error simply by **shifting the whole image slightly green/yellow and boosting brightness**, without doing the hard work of learning edge sharpening!
-3. When tested on urban cities like Paris, the result was a hazy greenish tint across the buildings.
+Satellite optical sensors are constrained by physical laws:
+1. **Diffraction Limits and Point Spread Function (PSF)**: Atmospheric turbulence and optical aperture diffraction blur high-frequency spatial gradients, spreading point light sources across adjacent detector pixels.
+2. **Signal-to-Noise Ratio (SNR) Trade-off**: Acquiring narrower ground pixels at orbital speeds reduces photon count per detector element, increasing electronic sensor noise.
+3. **Bandwidth and Storage**: Downlinking planetary imagery at sub-meter resolutions continuously exceeds civilian satellite radio frequency bandwidth.
 
-### How We Solved It: The Locked-Chroma ($Y\text{CrCb}$) Engine
-To eliminate this cross-sensor bias once and for all, we implemented our **Zero-Color-Drift Engine**, which consists of two parts:
-1. **YCrCb Chroma Locking (Core Innovation)**: We transform the image from standard RGB into the **$Y\text{CrCb}$ color space**, separating luminance ($Y$) from chroma ($Cr, Cb$). The AI network runs its deep edge reconstruction strictly on the $Y$ (Luminance) channel. We lock the original color channels ($Cr, Cb$) in place and merge them back together. **The result**: **0.00 color drift**.
-2. **Post-Processing Sharpening**: For the OpenCV baseline models (FSRCNN, ESPCN, EDSR), an unsharp mask is applied to the Y channel as a clearly labeled post-processing step to enhance luminance sharpness. The primary `Sentinel2SRNet` does NOT use this unsharp mask, as it learns edge reconstruction directly.
-
-### Radiometric Alignment and Custom Training
-The custom `Sentinel2SRNet` model was rigorously trained to handle these differences without shortcuts:
-* **Training Data**: Trained on the SEN2VENµS FGMANAUS site (Manaus rainforest).
-* **Radiometric Alignment**: Achieved via mean/std matching of the sensor data.
-* **Composite Loss**: The model uses a robust loss function: `L1 + 2.5 * Sobel_edge + 5.0 * mean_drift`. This directly penalizes color drift and enforces true edge learning.
+Super-resolution mapping computationally inverts the sensor optical transfer function, reconstructing sub-pixel spatial high frequencies while preserving authentic multispectral reflectance.
 
 ---
 
-## 6. The AI Model Architectures
+## 3. The Core Mission: 2x Native and Cascaded 2.5m Sub-4m Super-Resolution
 
-The project provides models divided into two categories: a primary custom-trained model, and three pre-trained baseline models used for latency-accuracy comparison.
-
-### Primary Model (Custom Trained on Satellite Data)
-1. **`Sentinel2SRNet` (Default)**:
-   * **Design**: PyTorch residual CNN trained on SEN2VENµS paired Sentinel-2/VENµS data with L1 + Sobel edge + zero-mean residual loss.
-   * **Best For**: Real-world satellite enhancement. This model is trained specifically on satellite data.
-
-### Baseline Models (OpenCV Pretrained, Generic)
-These models are NOT trained on satellite data. They are kept for latency-accuracy comparison.
-2. **`FSRCNN` (Fast Super-Resolution CNN)**:
-   * **Speed**: ~18 ms on CPU.
-   * **Design**: Uses 4 convolutional layers that shrink feature channels in low-resolution space before upscaling at the very end.
-   * **Best For**: Smooth, real-time panning across the global world map.
-3. **`EDSR` (Enhanced Deep Residual Networks)**:
-   * **Speed**: ~3.3 s on CPU.
-   * **Design**: 16 deep residual blocks containing over 43 million parameters. It removes unnecessary batch normalization layers to preserve high dynamic range radiometric depth.
-   * **Best For**: Scientific inspection where maximum structural detail on buildings, runways, and agricultural plots is required.
-4. **`ESPCN` (Efficient Sub-Pixel CNN)**:
-   * **Speed**: ~8.4 ms on CPU.
-   * **Design**: Extracts feature maps in low-resolution space and rearranges them into higher resolution using sub-pixel shuffle convolutions.
+The project delivers a dual-stage super-resolution pipeline:
+* **Stage 1: Native 2x Super-Resolution (10m to 5m GSD)**: Reconstructs authentic 5-meter ground sampling distance, matching the optical quality of the CNES/ISA VENuS satellite constellation.
+* **Stage 2: Cascaded 4x Super-Resolution (10m to 2.5m GSD)**: Executes a second-pass inference on the enhanced 5m feature map, breaking the sub-4m GSD barrier necessary for cadastral mapping, individual building identification, and roadway corridor routing.
 
 ---
 
-## 7. Advanced Inference: 8x Geometric Self-Ensemble (TTA)
+## 4. Teacher-Student Knowledge Distillation Framework
 
-In computer vision competitions, **Test-Time Augmentation (TTA)** is the gold-standard technique to maximize image quality without retraining:
-1. When you turn on the **8x TTA** checkbox in the Studio, the input image is automatically passed through 8 geometric transformations:
-   * 4 Rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$)
-   * 4 Horizontal Flips of each rotation
-2. Each of the 8 transformed images is passed through the neural network.
-3. The outputs are rotated and flipped back to their original position and **pixel-averaged**.
-4. **The benefit**: This acts like an ensemble of 8 observers looking at the scene from different angles. It cancels out directional filter artifacts, smooths sensor noise, and boosts quantitative **PSNR by +0.2 to +0.4 dB**.
+To bridge the gap between high-capacity research networks and low-resource district-level field offices, we employ a multi-teacher knowledge distillation strategy. Three specialized expert networks serve as teachers, transferring their learned representations to a compact student network:
 
----
-
-## 8. Remote Sensing Modes: NDVI & False-Color Infrared (CIR)
-
-Beyond standard natural color (RGB), the studio allows researchers to view satellite imagery in dedicated remote sensing modes:
-
-* **🌿 Natural RGB**: Standard optical color representation as seen by the human eye.
-* **🔴 False-Color CIR (Color Infrared)**:
-  * In remote sensing, vegetation reflects heavily in Near-Infrared (NIR) while absorbing visible red light.
-  * The CIR mode maps chlorophyll reflectance to bright crimson red, urban concrete to cyan/blue, and water to deep navy. This allows immediate identification of park boundaries and illegal deforestation.
-* **🌱 NDVI Greenness Index**:
-  * Simulates the **Normalized Difference Vegetation Index** using the `RdYlGn` colormap.
-  * Green indicates dense, healthy vegetation canopy, while red/yellow indicates bare soil, roads, and water bodies.
-
----
-
-## 9. Resources & Datasets Used
-
-| Resource | Origin | Purpose in Project |
-| :--- | :--- | :--- |
-| **Copernicus Sentinel-2** | European Space Agency (ESA) | Provides global 10m multispectral satellite imagery every 5 days. |
-| **VENµS Satellite** | CNES (France) & ISRO/ISA | Provides paired 5m reference imagery for ground-truth validation. |
-| **SEN2VENµS Dataset** | Zenodo (doi: 10.5281/zenodo.6514159) | Scientific dataset containing 129 registered tensor patches across ecological sites (e.g. Manaus, Brazil). |
-| **Esri World Imagery** | ArcGIS MapServer | Live global satellite tile service enabling click-anywhere super-resolution. |
-| **OpenStreetMap Nominatim** | OpenStreetMap Foundation | Free geocoding service enabling instant city and landmark search. |
-| **PyTorch & Torchvision** | Linux Foundation | Custom CNN definitions, residual block tensor math, and dataset loaders. |
-| **OpenCV (`dnn_superres`)** | Open Source CV | High-performance C++ backend inference engine for FSRCNN, EDSR, and ESPCN. |
-| **FastAPI & Uvicorn** | Python Community | Asynchronous ASGI REST backend server connecting model inference to the web UI. |
-| **Leaflet.js** | Open Source JS | Interactive world satellite map with panning, zooming, and coordinate tracking. |
-
----
-
-## 10. System Architecture
-
-```
-sr-mapping/
-├── backend/
-│   └── main.py              # FastAPI server: Model registry, TTA engine, REST endpoints
-├── frontend/
-│   ├── index.html           # UI: Leaflet map, city search bar, split slider, telemetry cards
-│   ├── style.css            # Dark-theme responsive styling, animations, loader styles
-│   └── app.js               # Frontend controller: map clicks, geocoding, spectral switching
-├── checkpoints/
-│   ├── FSRCNN_x2.pb         # Pretrained Fast CNN weights (38.9 KB)
-│   ├── EDSR_x2.pb           # Pretrained Deep Residual SOTA weights (38.5 MB)
-│   ├── ESPCN_x2.pb          # Pretrained Sub-Pixel CNN weights (86.4 KB)
-│   └── sr_sentinel2_2x.pt   # PyTorch checkpoint trained on SEN2VENµS
-├── data/
-│   └── sen2venus_sample/    # 5 paired evaluation patches (LR 10m, Bicubic, Target 5m)
-├── src/
-│   ├── data/dataset.py      # PyTorch dataset loader and percentile normalizer
-│   ├── models/sr_model.py   # Sentinel2SRNet custom deep residual architecture
-│   └── models/metrics.py    # PSNR (dB) and SSIM calculation engine
-├── start.bat                # One-click Windows desktop launcher
-├── Dockerfile               # Production container image specification
-├── docker-compose.yml       # Container orchestration file
-├── VIVA_GUIDE.md            # Technical Q&A guide for project presentations & defense
-└── PROJECT_DOCUMENTATION.md # This comprehensive reference guide
+```text
+[Teacher 1: EDSR] ──────┐
+(Accuracy Expert)        │
+                         ├──> [Consensus Filtering Gate] ──> [Sentinel2SRNet Student]
+[Teacher 2: EESRGAN] ────┤    (Agreement-Only Distillation)  (193.6K Params, CPU-Ready)
+(Detail Expert)          │
+                         │
+[Teacher 3: DCBCNN] ─────┘
+(Directional Expert)
 ```
 
+### The Three Teacher Models:
+1. **Accuracy Expert (EDSR)**: A 34-layer, 16-residual-block network with 43 million parameters. It stays strictly true to factual ground truth pixel intensities, providing a strong anchor against structural drift.
+2. **Detail Expert (EESRGAN)**: An edge-enhanced generative network utilizing Residual-in-Residual Dense Blocks (RRDB) coupled with second-order Laplacian operators. It specializes in resolving sharp building eaves, boundary walls, and property lines.
+3. **Directional Expert (DCBCNN)**: A directional network employing parallel 1x3, 3x1, and 3x3 convolutions with channel attention across 4 residual groups. It specializes in linear features such as roadways, shorelines, and field irrigation ditches.
+
+### The Student Model: Sentinel2SRNet
+* **Architecture**: A compact 4-residual-block network with PReLU activations, a global bicubic skip connection, and a sub-pixel convolution tail.
+* **Size**: 193,601 trainable parameters and a 765.5 KB disk footprint (over 220 times smaller than EDSR).
+* **Speed**: Executes in approximately 38.3 ms per 256x256 patch on standard laptop CPUs, roughly 70 times faster than EDSR on CPU.
+
 ---
 
-## 11. How Anyone Can Run This Project
+## 5. Consensus Distillation to Eliminate Feature Hallucination
 
-### Method A: The One-Click Windows Launcher (Easiest)
-Simply double-click the file named:
-```
-start.bat
-```
-This script will automatically verify the Python virtual environment, launch your default browser to `http://127.0.0.1:8000`, and start the backend server.
+A primary hazard of deep super-resolution in mission-critical applications (such as defense, taxation, or disaster relief) is artificial hallucination, where a generative model invents realistic-looking roads or buildings that do not exist.
 
-### Method B: Terminal Command
-Open PowerShell or Command Prompt in the project folder and run:
-```powershell
-.\.venv\Scripts\uvicorn.exe backend.main:app --host 127.0.0.1 --port 8000 --reload
-```
-Then navigate to **`http://127.0.0.1:8000`** in your browser.
+Our consensus distillation framework penalizes the student model if it generates high-frequency detail on pixels where the three teachers disagree:
+* If EDSR, EESRGAN, and DCBCNN all confirm a structural edge, the student learns the high-frequency feature.
+* If EESRGAN suggests an edge that EDSR and DCBCNN identify as texture noise, the consensus gate suppresses the gradient update.
+* This ensures that the student model outputs conservative, reliable cartographic features without synthetic artifacts.
 
-### Method C: Docker Container (Any Platform)
-If you have Docker installed, simply run:
+---
+
+## 6. Radiometric Safety: YCrCb Separation and Zero-Mean Residual Constraint
+
+Standard super-resolution models trained on consumer photos process RGB channels directly, causing severe radiometric distortion and color bleeding across satellite bands. Our architecture enforces two strict physics-based protections:
+
+### 1. Luminance Separation (YCrCb Processing)
+* The input 10m patch is converted to YCrCb color space.
+* Deep super-resolution is applied strictly to the luminance channel (Y), where structural spatial details reside.
+* The chrominance channels (Cr, Cb) are preserved and locked to the authentic baseline, preventing color drift.
+
+### 2. Analytical Zero-Mean Residual Constraint
+In Sentinel2SRNet, the residual output is constrained prior to addition with the bicubic baseline:
+
+$$I_{\text{residual}} \leftarrow I_{\text{residual}} - \mathbb{E}_{x,y}[I_{\text{residual}}]$$
+
+By enforcing a spatial mean of exactly zero, the network is mathematically prohibited from brightening, darkening, or tinting the scene. Macroscopic solar reflectance is preserved, ensuring downstream vegetation indices (NDVI) and water indices remain valid.
+
+---
+
+## 7. 8x Test-Time Augmentation (TTA) and Uncertainty Quantification
+
+When high-precision verification is required, the user can toggle 8x TTA in the studio:
+1. The input patch undergoes eight dihedral symmetry transformations (four 90-degree rotations combined with horizontal flips).
+2. The network executes forward passes across all eight transformed inputs and inverts them to the original orientation.
+3. **Ensemble Output**: The pixel-wise mean produces an enhanced image with reduced directional convolution noise and higher PSNR (+0.2 to +0.4 dB).
+4. **Epistemic Uncertainty Heatmap**: The pixel-wise variance across the eight predictions is calculated and rendered as a spatial heatmap:
+   * **Green**: High model confidence across all rotational symmetries.
+   * **Red**: Ambiguous textures, shadowed terrain, or sensor noise where predictions diverge.
+
+---
+
+## 8. Spectral Analysis Modes: False-Color CIR and NDVI VARI
+
+The studio provides interactive spectral proxy modes for agricultural and environmental monitoring:
+* **Natural RGB**: Standard visual optical composite.
+* **Color Infrared (CIR)**: Simulates false-color infrared photography by mapping near-infrared vegetation response into the red channel. Dense vegetative canopies appear in vivid crimson, distinguishing vegetation cleanly from asphalt, soil, and buildings.
+* **NDVI Proxy (VARI)**: Evaluates the Visible Atmospherically Resistant Index mapped across the RdYlGn colormap to estimate canopy vigor and vegetation cover without requiring specialized multispectral software.
+
+---
+
+## 9. Quantitative Benchmark Evaluation across 740 Test Patches
+
+All models were evaluated on 740 unseen test patches from the SEN2VENuS dataset, comparing model predictions against authentic 5-meter VENuS ground truth:
+
+| Model Architecture | Checkpoint File | MSE (Lower is better) | PSNR (dB) (Higher is better) | SSIM (Higher is better) | Delta PSNR vs Bicubic (dB) | Delta SSIM vs Bicubic |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Bicubic (Baseline)** | *Interpolation reference* | 338.39 | 23.79 dB | 0.7628 | Baseline | Baseline |
+| **DCBCNN (DCB-RCAB)** | `slimdiffsr_sentinel2_2x_best.pt` | **244.79** | **25.15 dB** | 0.7769 | **+1.36 dB** | +0.0141 |
+| **EESRGAN** | `eesrgan_sentinel2_2x_best.pt` | 246.57 | 25.05 dB | 0.7745 | +1.26 dB | +0.0117 |
+| **EDSR** | `edsr_sentinel2_2x_best.pt` | 257.87 | 24.92 dB | 0.7845 | +1.13 dB | +0.0217 |
+| **Sentinel2SRNet (Student)** | `sr_sentinel2_2x_best.pt` | 265.02 | 24.85 dB | **0.7898** | +1.06 dB | **+0.0270** |
+| **ESPCN** | `espcn_sentinel2_2x_best.pt` | 278.95 | 24.59 dB | 0.7746 | +0.80 dB | +0.0118 |
+| **FSRCNN** | `fsrcnn_sentinel2_2x.pt` | 338.20 | 23.51 dB | 0.7122 | -0.28 dB | -0.0506 |
+
+### Evaluation Key Takeaways:
+* **DCBCNN** achieved the highest PSNR (25.15 dB, +1.36 dB over bicubic) and lowest MSE (244.79), demonstrating that directional convolution kernels are exceptionally suited for remote sensing geometries.
+* **Sentinel2SRNet** achieved the highest structural similarity score (0.7898, +0.0270 over bicubic), outperforming the 43M-parameter EDSR model. This confirms that edge gradient supervision forces the student network to preserve sharp boundary contours.
+* **EDSR and EESRGAN** deliver strong accuracy and edge definition but require substantial compute, making them ideal teachers rather than real-time edge deployment models.
+
+---
+
+## 10. Multi-Tier Deployment Across Government Echelons
+
+To meet the practical constraints of government field deployment:
+1. **District Level (Pocket Version)**:
+   * Engine: INT8-quantized Sentinel2SRNet running via ONNX Runtime or OpenVINO.
+   * Hardware: Standard office desktop PCs with dual-core or quad-core CPUs and 4 GB RAM.
+   * Performance: Under 40 ms per tile, fully functional offline with zero cloud dependency.
+2. **State Level (Standard Version)**:
+   * Engine: Full-precision student model with 8x Test-Time Augmentation.
+   * Hardware: Regional workstations with quad-core or 8-core CPUs.
+   * Performance: Delivers sub-pixel maps accompanied by calibrated uncertainty heatmaps.
+3. **National Headquarters (Command Center Version)**:
+   * Engine: Full multi-teacher ensemble combining EDSR, EESRGAN, and DCBCNN.
+   * Hardware: GPU-accelerated server clusters.
+   * Performance: Maximum analytical fidelity for national-scale satellite cadastral mapping.
+
+---
+
+## 11. Operational Use Cases and Real-World Impact
+
+* **Pradhan Mantri Fasal Bima Yojana (PMFBY)**: Accurate separation of adjacent crop parcels, irrigation channels, and verification of localized crop lodging or drought damage.
+* **National Disaster Response Force (NDRF)**: Post-disaster mapping of breached embankments, flooded transport routes, and isolated settlements within minutes of public Sentinel-2 data release.
+* **Forestry and Resource Protection**: Detection of illegal clearings, unauthorized logging tracks, and forest boundary encroachment at 2.5m resolution.
+* **Cadastral and Municipal Planning**: Updating local land-use maps and monitoring peri-urban sprawl without costly aerial drone surveys.
+
+---
+
+## 12. Developer Quickstart and Local Execution
+
+### 1. Environment Setup
 ```bash
-docker compose up --build
+git clone https://github.com/gamerdox/sr-mapping.git
+cd sr-mapping
+
+python -m venv .venv
+
+# On Windows:
+.venv\Scripts\activate
+
+# On Linux / macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
 ```
 
----
+### 2. Launching the Application
+Double-click `start.bat` on Windows or execute:
+```bash
+uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+Access the studio at `http://127.0.0.1:8000` in your web browser.
 
-## 12. Frequently Asked Questions
-
-### Q: Why can't we just make the images 10x or 20x sharper?
-**A:** In single-image optical physics, the maximum amount of lost detail that can be mathematically recovered from a single exposure is bounded by the telescope's **Point Spread Function (PSF)** and the **Nyquist-Shannon sampling theorem**. 
-* 2x scaling (10m $\to$ 5m) quadruples pixel density and successfully recovers genuine sub-pixel optical transitions.
-* If you try to push a deterministic model to 8x or 16x from a single optical snapshot, the model will produce a blurry, piecewise-constant "watercolor" smudge because the physical photons simply do not exist in the raw sensor reading.
-
-### Q: What is the difference between PSNR and SSIM?
-**A:** 
-* **PSNR (Peak Signal-to-Noise Ratio)**: Measures the raw numerical error between two images in decibels ($\text{dB}$). Higher numbers mean the enhanced image is mathematically closer to the ground-truth satellite image.
-* **SSIM (Structural Similarity Index)**: Measures how well the edges, contrast, and structural patterns match human visual perception on a scale from $0.0$ to $1.0$. Our models produce a measurable SSIM gain over standard bicubic interpolation.
-
-### Q: Why does EDSR take ~3 seconds while FSRCNN takes ~18 milliseconds?
-**A:** FSRCNN has 4 convolutional layers and ~12,000 parameters. EDSR has 16 deep residual blocks and over **43,000,000 parameters**. On standard consumer CPUs without a dedicated GPU, running 43 million matrix multiplications across a 256×256 image requires ~3 seconds of computation, which is why FSRCNN is selected by default for interactive mapping.
+### 3. Evaluating Benchmark Metrics
+To re-evaluate models across the test set:
+```bash
+python calculate_all_models_metrics.py
+```
+Summary outputs are written to `results/benchmark_test_metrics.json` and `results/benchmark_test_metrics.csv`.
 
 ---
 
-## 13. System Scope, Validation Breadth & Engineering Decisions
+## License
 
-* **Multi-Biome Validation Across Diverse Terrains**:
-  The system evaluates quantitative fidelity (PSNR, SSIM, Sobel edge energy) across 8 benchmark patches covering four distinct remote-sensing biomes:
-  - **Dense Urban (Versailles, France - `sample_5`)**: Small buildings, rooftops, narrow road corridors (SSIM: 0.83).
-  - **Agricultural Cropland (Bordeaux, France - `sample_6`)**: Cadastral parcel fences, field boundaries (SSIM: 0.81).
-  - **Coastal / Hydrological (Gironde Estuary, France - `sample_7`)**: Water-land boundaries, river coastlines (SSIM: 0.68).
-  - **Dense Forestry & Canopy (Manaus, Amazon - `sample_0` to `sample_4`)**: Continuous canopy, clearings, rivers.
-* **Spectral Domain & Visual Proxies**:
-  The primary super-resolution pipeline operates on the 10m optical RGB bands (Band 2 Blue, Band 3 Green, Band 4 Red) where spatial resolution limits are most acute for human interpretation, disaster assessment, and urban planning. For web display, vegetation indices are rendered via VARI (Visible Atmospherically Resistant Index), the peer-reviewed optical proxy for vegetation health when operating on 3-channel display pipelines.
-* **Robust Multi-Tier Map Architecture**:
-  The interactive global explorer uses pre-cached multi-tier satellite tiles downsampled to 10m to guarantee real-time, deterministic 25ms inference anywhere on Earth without dependency on flaky conference Wi-Fi or third-party API rate-limiting during live presentations. Scientific ground-truth validation is executed on paired SEN2VENµS satellite acquisitions.
-
----
-
-### Project Repository & Code Access
-* **GitHub Repository**: [https://github.com/gamerdox/sr-mapping](https://github.com/gamerdox/sr-mapping)
-* **Author / Maintainer**: gamerdox
+Open-source under the [MIT License](LICENSE). Developed by Team PixelForge for Smart India Hackathon 2026.

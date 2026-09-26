@@ -1,200 +1,149 @@
-# 🧠 Sentinel2SRNet: Complete Architectural Blueprint & Component Deep-Dive
+# Sentinel2SRNet: Architectural Blueprint and Technical Specification
 
-This document provides an exhaustive, line-by-line technical specification of our custom-trained **`Sentinel2SRNet`** model as implemented in [`src/models/sr_model.py`](src/models/sr_model.py) and trained in [`src/models/init_weights.py`](src/models/init_weights.py).
+Complete architectural specification of the custom Sentinel2SRNet student model as implemented in `src/models/sr_model.py` and trained in `train_srnet.py`. Developed by Team PixelForge for Smart India Hackathon 2026 (Problem Statement SIH26142, National Technical Research Organisation - NTRO).
 
 ---
 
-## 1. Specification at a Glance
+## 1. Architectural Summary
 
-| Architectural Dimension | Engineering Value | Scientific / Technical Rationale |
+| Dimension | Value | Technical Context |
 | :--- | :--- | :--- |
-| **Model Class** | `Sentinel2SRNet(nn.Module)` | PyTorch deep residual sub-pixel convolutional neural network. |
-| **Total Parameters** | **193,601** (all trainable) | Compact edge design; $220\times$ fewer parameters than EDSR (43M). |
-| **Checkpoint Size on Disk** | **765.5 KB** (`sr_sentinel2_2x.pt`) | Ultra-lightweight; fits on resource-constrained embedded/edge servers. |
-| **Native Scale Factor** | **$2\times$** ($10\text{m} \rightarrow 5\text{m}$ GSD) | 4-fold increase in spatial pixel density. |
-| **Cascaded Mode** | **$4\times$** ($10\text{m} \rightarrow 2.5\text{m}$ GSD) | 2-stage cascade achieving sub-4m resolution for vehicle/building detection. |
-| **Total Convolutional Layers** | **11 Conv2d Layers** | Optimal depth for balancing gradient propagation and spatial expressiveness. |
-| **Latent Feature Channels** | **48 Channels** | Empirically discovered Pareto frontier: 98.4% edge acuity of 64 channels with 43% fewer FLOPs. |
-| **Activation Function** | **PReLU** (Parametric ReLU) | Solves "Dying ReLU" in dark satellite pixels (deep water bodies, building shadows). |
-| **Receptive Field** | **$23 \times 23$ pixels** ($10\text{m}$ space) | Encompasses a **$230\text{m} \times 230\text{m}$** physical footprint on Earth. |
-| **Upsampling Engine** | **`nn.PixelShuffle`** (Sub-Pixel Conv) | Replaces transposed conv to eliminate high-frequency checkerboard artifacts. |
-| **Radiometric Invariance** | **Zero-Mean Projection Layer** | Mathematically guarantees $\mathbb{E}[R_{\text{zero}}] = 0$, preserving NDVI and reflectance. |
-| **CPU Latency** | **$38.3\text{ ms}$** per $256 \times 256$ tile | Enables real-time, interactive panning across global web maps on standard CPUs. |
+| **Model Role** | Distilled Student Network | Learns consensus features from three teachers (EDSR, EESRGAN, DCBCNN). |
+| **Trainable Parameters** | **193,601** | Ultra-compact design, over 220 times smaller than EDSR (43M parameters). |
+| **Checkpoint Size** | **765.5 KB** (`sr_sentinel2_2x_best.pt`) | Fits easily into embedded devices or low-bandwidth edge deployments. |
+| **Native Scale Factor** | **2x** (10m to 5m GSD) | 4-fold increase in spatial pixel density. |
+| **Cascaded Mode** | **4x** (10m to 2.5m GSD) | Two-stage cascaded inference achieving sub-4m GSD for cadastral mapping. |
+| **Convolutional Layers** | **11 Conv2d Layers** | Optimal depth balancing non-linear expressiveness with fast gradient flow. |
+| **Latent Feature Channels** | **48 Channels** | Empirically determined Pareto frontier, saving 43% FLOPs versus 64 channels. |
+| **Activation Function** | **PReLU** (Parametric ReLU) | Prevents dead neurons across dark satellite pixels like deep water and shadows. |
+| **Receptive Field** | **23 x 23 pixels** (in 10m space) | Corresponds to a physical ground footprint of 230m x 230m. |
+| **Upsampling Engine** | **nn.PixelShuffle(2)** | Reorganizes channel depth into spatial pixels, avoiding checkerboard artifacts. |
+| **Radiometric Guard** | **Zero-Mean Residual Layer** | Forces residual map mean to zero, mathematically preserving macroscopic brightness. |
+| **Average CPU Latency** | **38.3 ms** per 256x256 patch | Interactive map panning on standard non-GPU office computers. |
 
 ---
 
-## 2. Architectural Dataflow & Tensor Transformations
+## 2. Layer Pipeline and Tensor Flow
 
-```
-INPUT TENSOR: x ~ [Batch, 3, H, W] (10m Resolution)
+The diagram below details the data flow through the dual-branch network:
+
+```text
+Input Tensor: x ~ [Batch, 3, H, W] (10m Resolution)
    │
-   ├──► [GLOBAL BICUBIC BRANCH]
+   ├──> [GLOBAL BICUBIC BRANCH]
    │    F.interpolate(x, scale=2, mode='bicubic', align_corners=False)
-   │    Output Shape: [Batch, 3, 2H, 2W] ─────────────────────────────────────────────┐
-   │                                                                                  │ (Macro Illumination Skip)
-   └──► [DEEP HIGH-FREQUENCY RESIDUAL BRANCH]                                         │
-        │                                                                             │
-        ▼                                                                             │
-     [1. FEATURE EXTRACTION HEAD]                                                     │
-        Conv2d(3 -> 48, kernel=3, padding=1) + PReLU()                                │
-        Tensor Shape: [Batch, 48, H, W]                                               │
-        │                                                                             │
-        ├── (Long Residual Identity Skip) ───────────────────────────┐                 │
-        ▼                                                            │                 │
-     [2. DEEP RESIDUAL BODY]                                         │                 │
-        ├── Residual Block 1: Conv(48,48) -> PReLU -> Conv(48,48) + Skip              │
-        ├── Residual Block 2: Conv(48,48) -> PReLU -> Conv(48,48) + Skip              │
-        ├── Residual Block 3: Conv(48,48) -> PReLU -> Conv(48,48) + Skip              │
-        └── Residual Block 4: Conv(48,48) -> PReLU -> Conv(48,48) + Skip              │
-        ▼                                                            │                 │
-     [3. MID-LEVEL FEATURE FUSION]                                   │                 │
-        Conv2d(48 -> 48, kernel=3, padding=1)                        │                 │
-        Tensor Shape: [Batch, 48, H, W]                              │                 │
-        ▼                                                            │                 │
-        (+) Elementwise Addition ◄───────────────────────────────────┘                 │
-        ▼                                                                              │
-     [4. SUB-PIXEL RECONSTRUCTION TAIL]                                               │
-        Conv2d(48 -> 12, kernel=3, padding=1)                                         │
-        Tensor Shape: [Batch, 12, H, W]                                               │
-        nn.PixelShuffle(upscale_factor=2)                                             │
-        Tensor Shape: [Batch, 3, 2H, 2W]                                              │
-        ▼                                                                              │
-     [5. ZERO-MEAN SPATIAL RESIDUAL PROJECTION]                                       │
-        res = res - res.mean(dim=(-2, -1), keepdim=True)                              │
-        Tensor Shape: [Batch, 3, 2H, 2W] (Strict E[res] = 0)                          │
-        ▼                                                                              │
-        (+) ADDITION: base + res ◄────────────────────────────────────────────────────┘
-        ▼
-     [6. RADIANCE CLAMPING]
-        torch.clamp(out, min=0.0, max=1.0)
-        FINAL OUTPUT TENSOR: [Batch, 3, 2H, 2W] (5m Super-Resolved Satellite Imagery)
+   │    Output Shape: [Batch, 3, 2H, 2W] ──────────────────────────────────────────┐
+   │                                                                               │
+   └──> [DEEP RESIDUAL STUDENT BRANCH]                                             │
+        │                                                                          │
+        ├── [1. FEATURE EXTRACTION HEAD]                                           │
+        │    Conv2d(3 -> 48, kernel=3, padding=1) + PReLU()                        │
+        │    Output Shape: [Batch, 48, H, W]                                       │
+        │    │                                                                     │
+        │    ├── (Identity Skip Connection) ──────────────────────────┐            │
+        │    ▼                                                        │            │
+        ├── [2. DEEP RESIDUAL BODY]                                   │            │
+        │    ├── Residual Block 1: Conv(48,48) -> PReLU -> Conv(48,48) + Skip      │
+        │    ├── Residual Block 2: Conv(48,48) -> PReLU -> Conv(48,48) + Skip      │
+        │    ├── Residual Block 3: Conv(48,48) -> PReLU -> Conv(48,48) + Skip      │
+        │    └── Residual Block 4: Conv(48,48) -> PReLU -> Conv(48,48) + Skip      │
+        │    Output Shape: [Batch, 48, H, W]                          │            │
+        │    ▼                                                        │            │
+        ├── [3. MID-LEVEL FEATURE FUSION]                             │            │
+        │    Conv2d(48 -> 48, kernel=3, padding=1)                   │            │
+        │    Output Shape: [Batch, 48, H, W]                          │            │
+        │    ▼                                                        │            │
+        │    (+) Elementwise Addition ◄───────────────────────────────┘            │
+        │    ▼                                                                     │
+        ├── [4. SUB-PIXEL RECONSTRUCTION TAIL]                                     │
+        │    Conv2d(48 -> 12, kernel=3, padding=1)                                │
+        │    Tensor Shape: [Batch, 12, H, W]                                       │
+        │    nn.PixelShuffle(upscale_factor=2)                                     │
+        │    Tensor Shape: [Batch, 3, 2H, 2W]                                      │
+        │    ▼                                                                     │
+        ├── [5. ZERO-MEAN RESIDUAL CONSTRAINT]                                     │
+        │    Residual = Residual - Residual.mean(dim=(-2, -1), keepdim=True)       │
+        │    Output Shape: [Batch, 3, 2H, 2W]                                      │
+        │    ▼                                                                     │
+        └────(+) Baseline Sum ◄────────────────────────────────────────────────────┘
+             ▼
+        torch.clamp(Base + Residual, 0.0, 1.0)
+        Final Output: [Batch, 3, 2H, 2W] (5m Super-Resolved Surface)
 ```
 
 ---
 
-## 3. Exhaustive Layer-by-Layer Parameter Breakdown
+## 3. Mathematical Principles of Key Components
 
-Every single weight tensor and bias vector in the 193,601 parameter graph:
+### 1. Residual Learning on Satellite Data
+Standard super-resolution networks attempt to predict the full target image from scratch. This forces the model to memorize low-frequency terrain colors, consuming network capacity. Sentinel2SRNet uses residual learning:
 
-| Layer Index | Module Name | Layer Type | Input $\rightarrow$ Output Shape | Weight & Bias Matrix Shapes | Parameter Count |
-| :---: | :--- | :--- | :--- | :--- | :---: |
-| **0** | `input` | Tensor (RGB) | $[B, 3, H, W]$ | — | 0 |
-| **1** | `head.0` | `nn.Conv2d` | $[B, 3, H, W] \rightarrow [B, 48, H, W]$ | $\mathbf{W}: [48, 3, 3, 3], \mathbf{b}: [48]$ | $1,296 + 48 = \mathbf{1,344}$ |
-| **2** | `head.1` | `nn.PReLU` | $[B, 48, H, W] \rightarrow [B, 48, H, W]$ | Learnable slope $\mathbf{a}: [1]$ | $\mathbf{1}$ |
-| **3** | `body.0` (ResBlock 1) | `ResidualBlock` | $[B, 48, H, W] \rightarrow [B, 48, H, W]$ | $\mathbf{W}_1:[48,48,3,3], \mathbf{b}_1:[48], \mathbf{a}:[1], \mathbf{W}_2:[48,48,3,3], \mathbf{b}_2:[48]$ | $\mathbf{41,569}$ |
-| **4** | `body.1` (ResBlock 2) | `ResidualBlock` | $[B, 48, H, W] \rightarrow [B, 48, H, W]$ | $\mathbf{W}_1:[48,48,3,3], \mathbf{b}_1:[48], \mathbf{a}:[1], \mathbf{W}_2:[48,48,3,3], \mathbf{b}_2:[48]$ | $\mathbf{41,569}$ |
-| **5** | `body.2` (ResBlock 3) | `ResidualBlock` | $[B, 48, H, W] \rightarrow [B, 48, H, W]$ | $\mathbf{W}_1:[48,48,3,3], \mathbf{b}_1:[48], \mathbf{a}:[1], \mathbf{W}_2:[48,48,3,3], \mathbf{b}_2:[48]$ | $\mathbf{41,569}$ |
-| **6** | `body.3` (ResBlock 4) | `ResidualBlock` | $[B, 48, H, W] \rightarrow [B, 48, H, W]$ | $\mathbf{W}_1:[48,48,3,3], \mathbf{b}_1:[48], \mathbf{a}:[1], \mathbf{W}_2:[48,48,3,3], \mathbf{b}_2:[48]$ | $\mathbf{41,569}$ |
-| **7** | `conv_after_body` | `nn.Conv2d` | $[B, 48, H, W] \rightarrow [B, 48, H, W]$ | $\mathbf{W}: [48, 48, 3, 3], \mathbf{b}: [48]$ | $20,736 + 48 = \mathbf{20,784}$ |
-| **8** | `long_skip (+)` | Additive Join | $[B, 48, H, W] + [B, 48, H, W]$ | Identity connection ($\text{feat} + \text{res}$) | 0 |
-| **9** | `tail.0` | `nn.Conv2d` | $[B, 48, H, W] \rightarrow [B, 12, H, W]$ | $\mathbf{W}: [12, 48, 3, 3], \mathbf{b}: [12]$ | $5,184 + 12 = \mathbf{5,196}$ |
-| **10** | `tail.1` | `nn.PixelShuffle`| $[B, 12, H, W] \rightarrow [B, 3, 2H, 2W]$ | Periodic sub-pixel rearrangement ($r=2$) | 0 |
-| **11** | `zero_mean_proj`| Analytical Layer | $[B, 3, 2H, 2W] \rightarrow [B, 3, 2H, 2W]$| Centering: $\mathbf{R} - \mathbb{E}[\mathbf{R}]$ | 0 |
-| **12** | `base_bicubic` | `F.interpolate` | $[B, 3, H, W] \rightarrow [B, 3, 2H, 2W]$ | Bicubic polynomial interpolation | 0 |
-| **13** | `global_skip (+)`| Additive Join | $\text{base} + \text{residual\_sr}$ | Additive identity | 0 |
-| **14** | `radiance_clamp`| `torch.clamp` | $[B, 3, 2H, 2W]$ in $[0.0, 1.0]$ | Dynamic range clamping | 0 |
-| **TOTAL** | — | **Full Network** | **$10\text{m} \rightarrow 5\text{m}$ Super-Resolution** | **All 193,601 Parameters Trainable** | **193,601** |
+$$\text{Output} = \text{Bicubic}(x) + \Delta I$$
 
----
+The network is dedicated 100% to learning high-frequency spatial residuals ($\Delta I$), while the bicubic baseline preserves global scene context.
 
-## 4. Component-by-Component Technical Explanations
+### 2. Analytical Zero-Mean Residual Constraint
+A critical challenge in satellite imagery is radiometric drift, where super-resolution models inadvertently brighten or darken areas, shifting NDVI vegetation readings or water masks. To prevent this, the residual map is constrained at the output:
 
-### A. Global Bicubic Branch: Low-Frequency Preservation
-* **Implementation**: `base = F.interpolate(x, scale_factor=2, mode="bicubic", align_corners=False)`
-* **Physics Rationale**: In satellite Earth observation, $>95\%$ of spectral energy is concentrated in macroscopic low frequencies (regional illumination, overall biome color tone, broad seasonal greenness).
-* **Engineering Impact**: If a deep neural network is forced to learn low-frequency luminance from scratch, it wastes over $90\%$ of its gradient capacity trying not to disrupt the overall brightness. By delegating low frequencies to the bicubic baseline, the neural network focuses $100\%$ of its capacity on learning the high-frequency residual:
-  $$I_{\text{SR}} = I_{\text{bicubic}} + \mathcal{R}(x)$$
+$$\Delta I_{\text{zero}} = \Delta I - \mathbb{E}_{x,y}[\Delta I]$$
+
+By enforcing a spatial mean of zero, the network is mathematically incapable of altering the macroscopic brightness or color balance of the scene. It can only inject edge sharpness.
+
+### 3. Parametric Rectified Linear Units (PReLU)
+Standard ReLU clips all negative values to zero. In remote sensing, low-reflectance pixels (deep ocean, lakes, dense cloud shadows, narrow building alleys) produce negative activations in early convolutional layers. PReLU learns a per-channel parameter $\alpha$:
+
+$$f(x) = \max(0, x) + \alpha \min(0, x)$$
+
+This ensures non-zero gradient flow across low-reflectance terrain, preserving texture in water bodies and shadow zones.
 
 ---
 
-### B. Feature Extraction Head: 48 Latent Channels
-* **Implementation**: `nn.Conv2d(3, 48, kernel_size=3, padding=1)` + `nn.PReLU()`
-* **Why 48 Channels**: Standard computer vision models use 64 or 256 channels, requiring $>100\text{ms}$ on CPU. We conducted ablation studies demonstrating that 48 channels achieves $98.4\%$ of the edge acuity of 64 channels while slashing FLOPs by $43\%$, guaranteeing real-time ($38\text{ms}$) CPU inference.
-* **Padding = 1**: With a $3\times3$ kernel and stride 1, padding=1 ensures that spatial feature maps retain their exact $H \times W$ dimensions without boundary erosion.
+## 4. Multi-Teacher Distillation and Training Loss
+
+During training, Sentinel2SRNet acts as the student in a multi-teacher knowledge distillation system:
+* **EDSR** provides structural supervision.
+* **EESRGAN** provides edge boundary gradients.
+* **DCBCNN** provides directional linear consistency.
+
+The composite training loss is formulated as:
+
+$$\mathcal{L}_{\text{total}} = \mathcal{L}_{1} + 2.5 \cdot \mathcal{L}_{\text{Sobel}} + 0.5 \cdot \mathcal{L}_{\text{consensus}}$$
+
+1. **Content Fidelity ($L_1$)**: Direct absolute error between the prediction and radiometrically aligned 5m VENuS ground truth.
+2. **Sobel Edge Gradient Loss**: Convolves both the prediction and ground truth with horizontal ($S_x$) and vertical ($S_y$) Sobel filters:
+   $$\mathcal{L}_{\text{Sobel}} = \|S_x * \hat{y} - S_x * y\|_1 + \|S_y * \hat{y} - S_y * y\|_1$$
+   This penalizes blurry transitions on roads, building perimeters, and field borders.
+3. **Consensus Distillation Loss**: Distills features only on pixels where all three teachers agree within a tolerance threshold, preventing the student from absorbing synthetic or hallucinated artifacts.
 
 ---
 
-### C. Activation Function: Why PReLU over Standard ReLU?
-* **Implementation**: `nn.PReLU()` with learnable slope parameter $a$ initialized to $0.25$.
-* **Formula**:
-  $$f(x) = \max(0, x) + a \cdot \min(0, x) = \begin{cases} x, & \text{if } x > 0 \\ a \cdot x, & \text{if } x \le 0 \end{cases}$$
-* **Why Standard ReLU Fails**: Standard ReLU sets $f(x) = 0$ for all $x < 0$ ($\frac{\partial f}{\partial x} = 0$). In satellite imagery, deep water bodies, building shadow canyons, and dense rainforest understories reflect very low radiance, producing negative latent activations. Standard ReLU causes the classic **"Dying ReLU"** problem, permanently freezing weight updates for shadow and water pixels.
-* **Why PReLU Wins**: PReLU learns an adaptive non-zero slope for negative activations via backpropagation. It allows subtle gradient dynamics to propagate through dark hydrological and forest features without manually guessing an arbitrary Leaky ReLU alpha.
+## 5. Test-Time Augmentation (TTA) and Uncertainty Estimation
+
+When the user activates 8x TTA in the studio, the input patch undergoes eight dihedral transformations:
+* Four rotations: 0 degrees, 90 degrees, 180 degrees, 270 degrees.
+* Two horizontal reflections for each rotation.
+
+The model evaluates all eight transformed variants, inverts them to their original orientation, and calculates two products:
+1. **Ensemble Mean**: The pixel-wise average, producing an image with reduced directional convolution noise and improved PSNR (+0.2 to +0.4 dB).
+2. **Per-Pixel Uncertainty Map**: The pixel-wise variance across the eight predictions:
+   $$\sigma^2(x, y) = \frac{1}{8} \sum_{k=1}^8 \left(I_k(x, y) - \mu(x, y)\right)^2$$
+   Normalized into a confidence score, where green indicates high model certainty and red highlights ambiguous textures or sensor noise.
 
 ---
 
-### D. The Deep Residual Body (4 Residual Blocks)
-* **Implementation**: 4 cascaded `ResidualBlock(48)` units. Each unit consists of:
-  $$\mathbf{x}_{\text{out}} = \mathbf{x}_{\text{in}} + \mathbf{W}_2 * \text{PReLU}(\mathbf{W}_1 * \mathbf{x}_{\text{in}} + \mathbf{b}_1) + \mathbf{b}_2$$
-* **Gradient Highway**: During backpropagation, error gradients flow directly through the skip connection:
-  $$\frac{\partial \mathcal{L}}{\partial \mathbf{x}_{\text{in}}} = \frac{\partial \mathcal{L}}{\partial \mathbf{x}_{\text{out}}} \left( \mathbf{I} + \frac{\partial \mathcal{F}}{\partial \mathbf{x}_{\text{in}}} \right)$$
-  The identity matrix $\mathbf{I}$ guarantees that gradients never vanish, even across all 11 stacked layers.
-* **Receptive Field**: Each $3\times3$ convolution adds 2 pixels of context. Across the Head (3px), 4 ResBlocks ($4 \times 4 = 16\text{px}$), Fusion (2px), and Tail (2px), the effective receptive field is **$23 \times 23$ pixels** in 10m space $\equiv \mathbf{230\text{m} \times 230\text{m}}$ on the ground—large enough to capture full agricultural plots, urban blocks, and highway corridors.
+## 6. Quantitative Evaluation across 740 Test Patches
 
----
+Evaluation results across 740 test patches from the SEN2VENuS dataset evaluated against authentic 5m VENuS ground truth:
 
-### E. Mid-Level Feature Fusion & Long Identity Skip
-* **Implementation**: `conv_after_body = nn.Conv2d(48, 48, 3, padding=1)` followed by `tail(feat + res)`.
-* **Fusion Logic**: The output of the 4th residual block passes through an additional $3\times3$ convolution to synthesize multi-scale features before fusion.
-* **Long Skip Connection**: The initial shallow edge features extracted by the Head (`feat`) are added elementwise to the deep contextual features (`res`), preventing semantic drift and anchoring fine geometry.
+| Model Architecture | Checkpoint File | MSE (Lower is better) | PSNR (dB) (Higher is better) | SSIM (Higher is better) | Delta PSNR vs Bicubic (dB) | Delta SSIM vs Bicubic |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Bicubic (Baseline)** | *Interpolation reference* | 338.39 | 23.79 dB | 0.7628 | Baseline | Baseline |
+| **DCBCNN (DCB-RCAB)** | `slimdiffsr_sentinel2_2x_best.pt` | 244.79 | 25.15 dB | 0.7769 | +1.36 dB | +0.0141 |
+| **EESRGAN** | `eesrgan_sentinel2_2x_best.pt` | 246.57 | 25.05 dB | 0.7745 | +1.26 dB | +0.0117 |
+| **EDSR** | `edsr_sentinel2_2x_best.pt` | 257.87 | 24.92 dB | 0.7845 | +1.13 dB | +0.0217 |
+| **Sentinel2SRNet (Student)** | `sr_sentinel2_2x_best.pt` | 265.02 | 24.85 dB | **0.7898** | +1.06 dB | **+0.0270** |
+| **ESPCN** | `espcn_sentinel2_2x_best.pt` | 278.95 | 24.59 dB | 0.7746 | +0.80 dB | +0.0118 |
+| **FSRCNN** | `fsrcnn_sentinel2_2x.pt` | 338.20 | 23.51 dB | 0.7122 | -0.28 dB | -0.0506 |
 
----
-
-### F. Sub-Pixel Reconstruction Tail (`nn.PixelShuffle`)
-* **Implementation**: `nn.Conv2d(48, 12, kernel_size=3, padding=1)` + `nn.PixelShuffle(scale_factor=2)`
-* **Sub-Pixel Shuffle Formula**:
-  $$I_{\text{SR}}(x, y, c) = T_{c \cdot r^2 + r \cdot \text{mod}(y, r) + \text{mod}(x, r)}\left(\lfloor x / r \rfloor, \lfloor y / r \rfloor\right)$$
-* **Why Not Transposed Convolution**: Transposed convolution (`ConvTranspose2d`) causes uneven kernel overlap, resulting in severe high-frequency **checkerboard artifacts**. `PixelShuffle` performs a deterministic, artifact-free periodic memory rearrangement.
-* **$75\%$ FLOP Reduction**: All 10 prior convolution layers operate on the low-resolution $10\text{m}$ grid ($H \times W$). Upsampling occurs exclusively at the final layer, slashing memory and computation by $75\%$ compared to pre-upsampling networks like SRCNN.
-* **Tail Weight Initialization**: Initialized with $\mathcal{N}(0, 10^{-3})$ and zero bias. At epoch 0, the model's residual output is near-zero, allowing the network to smoothly bootstrap from the bicubic baseline without gradient divergence.
-
----
-
-### G. Analytical Zero-Mean Spatial Residual Projection (The Radiometric Lock)
-* **Implementation**:
-  ```python
-  residual_sr = residual_sr - residual_sr.mean(dim=(-2, -1), keepdim=True)
-  ```
-* **Mathematical Proof of Zero Drift**:
-  $$\mathbb{E}_{H, W}[R_{\text{zero}}] = \mathbb{E}[R] - \mathbb{E}[R] = 0$$
-  $$\mathbb{E}[I_{\text{SR}}] = \mathbb{E}[I_{\text{bicubic}} + R_{\text{zero}}] = \mathbb{E}[I_{\text{bicubic}}] + 0 = \mathbb{E}[I_{\text{bicubic}}]$$
-* **Scientific Impact**: In remote sensing, shifting mean brightness by even $2\%$ corrupts vegetative indices (NDVI) and water indices (NDWI). Our analytical projection restricts $100\%$ of the network's parameters to synthesizing spatial geometry and edge gradients—it is mathematically barred from altering macroscopic solar reflectance.
-
----
-
-### H. Radiance Clamping
-* **Implementation**: `torch.clamp(out, min=0.0, max=1.0)`
-* **Function**: Restricts output values to valid physical surface reflectance $[0.0, 1.0]$, preventing overexposure blowout or negative radiance.
-
----
-
-## 5. Training Regimen & Composite Loss Mathematics
-
-The model was trained on the **SEN2VENµS** benchmark (paired 10m Sentinel-2 / 5m VENµS patches) using a multi-objective loss:
-
-$$\mathcal{L}_{\text{total}} = \mathcal{L}_{L1} + 2.5 \cdot \mathcal{L}_{\text{Sobel}} + 5.0 \cdot \mathcal{L}_{\text{Drift}}$$
-
-1. **Content Fidelity Loss ($\mathcal{L}_{L1}$)**:
-   $$\mathcal{L}_{L1} = \frac{1}{N}\sum |I_{\text{SR}} - I_{\text{HR, aligned}}|$$
-   Penalizes absolute voxel deviations linearly. Preferred over MSE/$L_2$ because $L_1$ avoids blurring across sharp edge discontinuities.
-2. **Sobel Edge Derivative Loss ($\mathcal{L}_{\text{Sobel}}$)**:
-   $$\mathcal{L}_{\text{Sobel}} = \|\mathbf{S}_x * I_{\text{SR}} - \mathbf{S}_x * I_{\text{HR, aligned}}\|_1 + \|\mathbf{S}_y * I_{\text{SR}} - \mathbf{S}_y * I_{\text{HR, aligned}}\|_1$$
-   Convolves predictions and targets with fixed $3\times3$ Sobel filters, directly penalizing blurry building roofs, roads, and field borders ($\text{weight} = 2.5$).
-3. **Zero-Mean Radiometric Drift Penalty ($\mathcal{L}_{\text{Drift}}$)**:
-   $$\mathcal{L}_{\text{Drift}} = \left| \mathbb{E}[I_{\text{SR}}] - \mathbb{E}[I_{\text{base}}] \right|$$
-   Strictly penalizes macro-illumination bias ($\text{weight} = 5.0$).
-4. **Cross-Sensor Radiometric Alignment**:
-   $$I_{\text{HR, aligned}} = \frac{I_{\text{HR}} - \mu_{\text{HR}}}{\sigma_{\text{HR}} + 10^{-5}} \cdot \sigma_{\text{base}} + \mu_{\text{base}}$$
-   Prevents the model from memorizing atmospheric solar elevation differences between sensors.
-
----
-
-## 6. Inference Modes
-
-* **8-Way Geometric Self-Ensemble (TTA)**:
-  Evaluates 4 rotations $\times$ 2 horizontal flips and averages the inverted outputs:
-  $$\bar{I}_{\text{SR}} = \frac{1}{8}\sum_{i=1}^8 \mathcal{T}_i^{-1}\left(f_\theta(\mathcal{T}_i(I_{\text{LR}}))\right)$$
-  The per-pixel sample variance across the 8 predictions provides a **Confidence / Uncertainty Heatmap**, fulfilling defense and intelligence requirements to flag hallucination risk.
-* **Cascaded $4\times$ Mode ($2.5\text{m}$ GSD)**:
-  $$10\text{m GSD} \xrightarrow{\text{Stage 1 (2x)}} 5\text{m GSD} \xrightarrow{\text{Stage 2 (2x)}} 2.5\text{m GSD}$$
-  Achieves $2.5\text{m}$ spatial resolution ($16\times$ pixel density), resolving secondary road corridors and small building footprints at zero hardware cost.
+### Architectural Takeaway
+Sentinel2SRNet achieves the highest SSIM (0.7898) among all tested models, including the 43M-parameter EDSR network. This confirms that edge gradient supervision and zero-mean residual projection force the network to prioritize structural line integrity over flat pixel averaging, while running at 38.3 ms per tile on ordinary CPUs.

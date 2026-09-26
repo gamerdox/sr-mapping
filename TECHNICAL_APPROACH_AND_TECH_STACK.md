@@ -1,111 +1,164 @@
-# 🚀 TECHNICAL APPROACH & SYSTEM ARCHITECTURE
+# Technical Approach and System Architecture
 
-> **Project Title**: End-to-End Super-Resolution Mapping on Sentinel-2 Satellite Imagery (10m → 5m / 2.5m GSD)  
-> **Initiative**: Smart India Hackathon (SIH 2025) / Geospatial & Defense Problem Statement  
-> **Core Engine**: Custom `Sentinel2SRNet` (193k Parameters, Trained on SEN2VENµS Satellite Data)
+Comprehensive overview of the technical approach, system architecture, multi-tiered deployment, and technology stack for the Sentinel-2 Super-Resolution Mapping project developed by Team PixelForge for Smart India Hackathon 2026 (Problem Statement SIH26142, National Technical Research Organisation - NTRO).
 
 ---
 
-## 1. System Architecture Poster (Presentation Format)
+## 1. Technical Approach: The Seven-Stage Pipeline
 
-Below is the complete presentation flowchart diagram matching the hackathon architecture poster format:
+Our solution follows a structured, seven-stage engineering pipeline designed to bridge the gap between high-capacity research models and low-resource operational deployment in government district offices:
 
-![Technical Approach Flowchart Poster](results/technical_approach_poster.png)
+```text
+[1. Collect Paired Photos]
+Sentinel-2 (10m) + VENuS (5m) Paired Dataset (3,695 pairs across 3 sites)
+           │
+           ▼
+[2. Test Lightweight Starter Models]
+FSRCNN · ESPCN · Sentinel2SRNet
+           │
+           ▼
+[3. Three Expert Models Teach]
+Accuracy Expert (EDSR) · Detail Expert (EESRGAN) · Directional Expert (DCB-CNN)
+           │
+           ▼
+[4. Small Student Model Learns]
+Consensus Knowledge Distillation -> Sentinel2SRNet Student (Copies consensus-only detail)
+           │
+           ▼
+[5. Shrink to Fit Any PC]
+Pruning · INT8 Quantization · ONNX + OpenVINO Runtime
+           │
+           ▼
+[6. Delivered to Every Government Level]
+District: INT8 Student (CPU) | State: Student + 8x TTA | Headquarters: Full 3-Teacher Ensemble
+           │
+           ▼
+[7. Sharper, Trustworthy Maps]
+Cascaded 2.5m GSD Maps + Per-Pixel Confidence Heatmaps (Green=High, Red=Uncertain)
+```
+
+### Detailed Breakdown of the Seven Stages:
+
+1. **Collect Paired Satellite Imagery**:
+   We train on authentic paired multispectral imagery from the European Space Agency and CNES: 10-meter Sentinel-2 inputs paired with non-interpolated 5-meter VENuS ground truth. The dataset encompasses 3,695 paired scenes across three distinct biomes (dense rainforest in Manaus, coastal wetlands in Mar Menor, and urban/agricultural plains in Alsace).
+2. **Test Lightweight Starter Models**:
+   Early experimentation evaluated baseline CNN architectures (FSRCNN and ESPCN) alongside an initial prototype of Sentinel2SRNet to establish CPU latency and reconstruction baselines.
+3. **Deploy Three Teacher Experts**:
+   To guide the learning process without human annotation:
+   * **EDSR (Accuracy Expert)**: Preserves overall pixel intensity distributions and avoids geometric skew.
+   * **EESRGAN (Detail Expert)**: Utilizes second-order Laplacian edge supervision to reconstruct crisp road margins and building outlines.
+   * **DCB-CNN (Directional Expert)**: Employs frequency-separable directional convolutions (1x3 and 3x1 kernels) to maintain continuous linear corridors like roads and shorelines.
+4. **Consensus Knowledge Distillation**:
+   A primary risk of generative super-resolution is hallucination (inventing nonexistent structures). Our distillation objective filters out synthetic details by allowing the student model (Sentinel2SRNet) to learn high-frequency features only where all three teacher models agree.
+5. **Model Compression for Edge Execution**:
+   The student model is pruned and quantized to INT8 precision. Using ONNX and OpenVINO runtime engines, it executes with minimal memory footprint on non-GPU systems.
+6. **Multi-Tier Deployment Architecture**:
+   Recognizing the diverse compute infrastructure across government echelons:
+   * **District Offices**: Pocket version (INT8 student model on standard dual-core or quad-core desktop CPUs, under 40 ms per tile).
+   * **State Agencies**: Standard version (student model running with 8x Test-Time Augmentation to produce calibrated uncertainty heatmaps).
+   * **National Headquarters**: High-precision version (full multi-teacher ensemble executed on GPU servers for mission-critical analysis).
+7. **Trustworthy Mapping and Uncertainty Scoring**:
+   Super-resolved maps are delivered alongside an epistemic confidence map, where green denotes high model certainty and red flags ambiguous features, preventing incorrect decision-making.
 
 ---
 
-## 2. Interactive System Flowchart (Mermaid)
+## 2. Radiometric-Safe Reconstruction Pipeline
+
+To ensure that super-resolution does not corrupt authentic multispectral reflectance values used in scientific indices like NDVI and NDWI:
+
+```text
+RGB Input (10m) ──> [ YCrCb Color Transform ] ──┬──> Y (Luminance Channel) ──> [ Sentinel2SRNet ] ──> Enhanced Y' ──┐
+                                                 │                                                                   │
+                                                 └──> Cr, Cb (Chroma Channels) ──> [ Exact Chroma Lock ] ────────────┴──> Reconstructed RGB (5m / 2.5m)
+```
+
+1. **Luminance Separation**: The input image is converted from RGB to YCrCb space.
+2. **Targeted Enhancement**: Spatial super-resolution is executed strictly on the luminance channel (Y), where human and analytical edge acuity resides.
+3. **Chroma Locking**: The original chrominance channels (Cr, Cb) are preserved and locked, preventing artificial color shifting.
+4. **Zero-Mean Residual Projection**: The learned residual map has its spatial mean analytically subtracted, guaranteeing zero macro-illumination drift.
+
+---
+
+## 3. System Architecture Diagram
 
 ```mermaid
 graph TD
-    Start["🚀 START HERE: Input Data Source & User Mode Selection"] --> BranchA["📦 Workflow A: Offline Benchmark Mode"]
-    Start --> BranchB["🌐 Workflow B: Online Web GIS Studio"]
-    Start --> BranchC["🛡️ Workflow C: Defense & Multispectral Mode"]
+    subgraph Ingestion ["1. Data Acquisition and Preprocessing"]
+        S2["Sentinel-2 MSI (10m L2A)"]
+        VENUS["VENuS Optical (5m Ground Truth)"]
+        NORM["Percentile Dynamic Range Normalization"]
+        ALIGN["Radiometric Sensor Cross-Alignment"]
+        S2 --> NORM --> ALIGN
+        VENUS --> ALIGN
+    end
 
-    %% Branch A
-    BranchA --> A1["1. Ingest Paired SEN2VENµS Patches (10m vs. 5m)"]
-    A1 --> A2["2. 2%-98% Percentile Radiometric Normalization"]
-    A2 --> A3["3. Cross-Sensor Mean/Std Radiometric Alignment"]
-    A3 --> A4["4. Sentinel2SRNet Deep Residual Forward Pass (38ms)"]
-    A4 --> A5["5. Sub-Pixel Convolution (nn.PixelShuffle 2x)"]
-    A5 --> A6["6. Analytical Zero-Mean Residual Projection: E[R] = 0"]
-    A6 --> A7["7. Composite Loss (L1 + 2.5*Sobel + 5.0*Drift)"]
-    A7 --> A8["8. Multi-Metric Engine (PSNR, SSIM, SAM, ERGAS)"]
-    A8 --> A9["9. Benchmark vs. Baselines (FSRCNN, ESPCN, EDSR)"]
-    A9 --> A10["10. Automated Word (.docx) & PDF Evaluation Report"]
+    subgraph DistillationFramework ["2. Multi-Teacher Consensus Framework"]
+        T1["Teacher 1: EDSR (Accuracy)"]
+        T2["Teacher 2: EESRGAN (Detail)"]
+        T3["Teacher 3: DCB-CNN (Directional)"]
+        GATE["Consensus Gate (Agreement Filter)"]
+        STUDENT["Sentinel2SRNet Student (193.6K Params)"]
+        ALIGN --> T1 --> GATE
+        ALIGN --> T2 --> GATE
+        ALIGN --> T3 --> GATE
+        GATE -->|Consensus Guidance| STUDENT
+    end
 
-    %% Branch B
-    BranchB --> B1["1. Leaflet.js Interactive Web Map Pan / Zoom"]
-    B1 --> B2["2. FastAPI /api/sr/predict-tile REST Request"]
-    B2 --> B3["3. Multi-Tier Cache (In-Memory LRU + Local Disk)"]
-    B3 --> B4["4. Real-Time PyTorch Inference on CPU (~38ms)"]
-    B4 --> B5["5. Radiometric YCrCb Chroma Lock & PSF Deblur"]
-    B5 --> B6["6. Interactive Before/After Swipe Slider & Heatmap"]
+    subgraph EdgeEngine ["3. Inference and Edge Compression"]
+        ONNX["ONNX / OpenVINO Runtime Engine"]
+        QUANT["INT8 Quantization and Pruning"]
+        STUDENT --> QUANT --> ONNX
+    end
 
-    %% Branch C
-    BranchC --> C1["1. High-Precision Trigger: Cascaded 4x or 8x TTA"]
-    C1 --> C2["2. 8-Way Dihedral Transformations (4 Rot x 2 Flips)"]
-    C2 --> C3["3. Geometric Ensemble Prediction & Inverse Average"]
-    C3 --> C4["4. Per-Pixel Sample Variance -> Confidence Heatmap"]
-    C4 --> C5["5. Remote Sensing Proxies: False-Color CIR & NDVI VARI"]
-    C5 --> C6["6. Cascaded 2.5m GSD Output (Sub-4m Building Vectors)"]
+    subgraph ServiceTiers ["4. Operational Deployment Tiers"]
+        DISTRICT["District Level: INT8 CPU (<40 ms)"]
+        STATE["State Level: Student + 8x TTA"]
+        HQ["HQ Level: Full Multi-Teacher Ensemble"]
+        ONNX --> DISTRICT
+        ONNX --> STATE
+        T1 --> HQ
+        T2 --> HQ
+        T3 --> HQ
+    end
 
-    style Start fill:#1E293B,stroke:#0F172A,stroke-width:2px,color:#fff
-    style BranchA fill:#FEF3C7,stroke:#D97706,stroke-width:2px,color:#92400E
-    style BranchB fill:#DBEAFE,stroke:#2563EB,stroke-width:2px,color:#1E3A8A
-    style BranchC fill:#D1FAE5,stroke:#059669,stroke-width:2px,color:#064E3B
+    subgraph Products ["5. Analysis Products and Visualizations"]
+        MAP5M["5m Super-Resolved Surface Map"]
+        MAP25M["Cascaded 2.5m Sub-4m Cadastral Map"]
+        CONF["Per-Pixel Confidence Heatmap"]
+        INDICES["Vegetation Indices: VARI NDVI and False-Color CIR"]
+        DISTRICT --> MAP5M
+        STATE --> MAP5M
+        STATE --> CONF
+        HQ --> MAP25M
+        MAP5M --> INDICES
+    end
 ```
 
 ---
 
-## 3. Detailed Step-by-Step Technical Approach
+## 4. Technology Stack
 
-### Branch A: Offline Scientific Benchmark Mode (Orange Path)
-*Designed for scientific validation, local verification, and offline defense environments with zero cloud connectivity:*
-1. **Load Ground Truth Dataset**: Ingests paired multi-temporal **SEN2VENµS** satellite patches ($10\text{m}$ Sentinel-2 vs. $5\text{m}$ VENµS ground truth across 4 temporal revisits).
-2. **Preprocessing & Dynamic Range Normalization**: Clips reflectance to the 2nd–98th percentile, preserving optical dynamic range and converting bands to floating-point tensors in $[0.0, 1.0]$.
-3. **Cross-Sensor Radiometric Alignment**: Normalizes the VENµS target's mean and standard deviation to match the Sentinel-2 base, eliminating cross-sensor atmospheric illumination shortcuts.
-4. **PyTorch Model Forward Pass**: Executes [`Sentinel2SRNet`](src/models/sr_model.py) (11 Conv layers, 4 Residual Blocks with PReLU activations) in **~38.3 ms on standard CPU**.
-5. **Sub-Pixel Convolution (`nn.PixelShuffle`)**: Reassembles 12 latent channels into 3 spatial RGB channels at $2\times$ scale without transposed convolution checkerboard artifacts.
-6. **Zero-Mean Spatial Residual Projection**: Enforces $R = R - \text{mean}(R)$, guaranteeing $\mathbb{E}[I_{\text{SR}}] \equiv \mathbb{E}[I_{\text{base}}]$ and permanently locking macroscopic color balance.
-7. **Composite Loss Optimization**: Supervised via:
-   $$\mathcal{L}_{\text{total}} = \mathcal{L}_{L1} + 2.5 \cdot \mathcal{L}_{\text{Sobel}} + 5.0 \cdot \mathcal{L}_{\text{Drift}}$$
-8. **Multi-Metric Evaluation Engine**: Computes textual metrics (PSNR, SSIM, MAE), edge metrics (Sobel Energy Gain), and spectral metrics (SAM in degrees, ERGAS).
-9. **Baseline Comparison Benchmarking**: Evaluates identical patches against open-source baselines (`FSRCNN`, `ESPCN`, `EDSR`, and `Bicubic`).
-10. **Automated Multi-Format Reporting**: Generates side-by-side comparison images and exports formatted Word documents ([`MODEL_BENCHMARK_AND_COMPARISON.docx`](MODEL_BENCHMARK_AND_COMPARISON.docx)).
+The project relies on a lightweight, modular technology stack:
+
+* **Programming Language**: Python (3.10, 3.11, 3.12).
+* **Deep Learning Frameworks**: PyTorch, Torchvision, ONNX Runtime, OpenVINO.
+* **Computer Vision and Scientific Computing**: OpenCV (opencv-contrib-python), NumPy, SciPy, Pillow, Scikit-Image, Matplotlib.
+* **Backend and API Layer**: FastAPI, Uvicorn, Pydantic, HTTPX, Requests.
+* **Web Mapping and Frontend**: HTML5, CSS3, Vanilla JavaScript (ES6+), Leaflet.js, Esri World Imagery API.
+* **DevOps, Tooling and Packaging**: Docker, PyTest, Git.
 
 ---
 
-### Branch B: Online Live Web GIS Studio Mode (Blue Path)
-*Powers the interactive web interface, allowing analysts to pan globally and enhance satellite imagery on demand:*
-1. **Interactive Leaflet.js UI**: The user navigates the world map or clicks benchmark presets (Paris, Versailles, Manaus, Bordeaux).
-2. **FastAPI REST Tile Request**: The frontend sends an HTTP request to `/api/sr/predict-tile` with zoom level, X/Y tile coordinates, and model selection.
-3. **Multi-Tier Caching Layer**: Checks in-memory LRU cache (128 entries) $\rightarrow$ local persistent disk cache $\rightarrow$ upstream Esri/Sentinel-2 WMTS with exponential backoff.
-4. **Real-Time PyTorch Inference**: Executes the forward pass in **~38ms on CPU**, operating strictly in low-resolution latent space for maximum throughput.
-5. **Radiometrically Calibrated Chroma Engine**: Separates $Y\text{CrCb}$ channels, inverts Point Spread Function (PSF) MTF blur on $Y$, locks authentic chroma ($Cr, Cb$), and normalizes per-channel RGB white balance.
-6. **Interactive Split-Screen View**: Streams base64 PNG tiles to the browser, rendering an interactive swipe-curtain split screen and a difference heatmap.
+## 5. Quantitative Model Benchmark (740 Test Patches)
 
----
+Comprehensive evaluation conducted across all 740 unseen test patches from the SEN2VENuS dataset evaluated against authentic 5m VENuS ground truth:
 
-### Branch C: Defense Intelligence & Multispectral Mode (Green Path)
-*Provides high-assurance intelligence analysis for military, cadastral survey, and environmental disaster monitoring:*
-1. **High-Precision Trigger**: Analyst activates Cascaded $4\times$ Super-Resolution or enables the **8-Way Test-Time Augmentation (TTA)** toggle.
-2. **8-Way Dihedral Transformations**: Transforms the input tensor across 8 geometric variants (4 orthogonal rotations: $0^\circ, 90^\circ, 180^\circ, 270^\circ$ and 4 horizontal flips).
-3. **Self-Ensemble Prediction & Inversion**: Each variant passes through the neural network; outputs are mathematically inverted back to the original orientation and pixel-averaged.
-4. **Per-Pixel Uncertainty Quantification**: Calculates the sample variance across all 8 ensemble passes, generating a per-pixel **Confidence / Uncertainty Heatmap** (Green = High Confidence, Red = High Uncertainty) to flag hallucination risk.
-5. **Multispectral Remote Sensing Proxies**: Computes **False-Color Infrared (CIR)** (vegetation in crimson, urban in cyan) and **VARI** (Visible Atmospherically Resistant Index proxy for NDVI).
-6. **Cascaded 2.5m GSD Sub-4m Generation**: Cascades Stage 1 ($10\text{m} \rightarrow 5\text{m}$) into Stage 2 ($5\text{m} \rightarrow 2.5\text{m}$), generating sub-4m ground resolution to resolve vehicle corridors, secondary roads, and building outlines.
-
----
-
-## 4. Comprehensive Technology Stack
-
-| Layer / Domain | Technologies & Libraries | Architectural Role & Justification |
-| :--- | :--- | :--- |
-| **🤖 Deep Learning & AI Core** | **PyTorch 2.0+**, Torchvision, `Sentinel2SRNet` (193k params) | Custom convolutional neural network, residual blocks, PReLU activation, sub-pixel shuffle upsampling, and 8-way TTA inference. |
-| **👁️ Computer Vision & Geo** | **OpenCV** (`cv2.dnn_superres`), **NumPy**, **SciPy** (`ndimage.sobel`), **PIL / Pillow** | Baseline models (`FSRCNN`, `ESPCN`, `EDSR`), image decoding, Sobel edge gradient computation, PSF MTF deblurring, and SAM/ERGAS metric calculation. |
-| **⚡ Backend & API Engine** | **Python 3.12**, **FastAPI**, **Uvicorn**, **Pydantic**, **Requests** | High-performance asynchronous REST API server, request validation, tile coordinate math (`deg2num`), and multi-tier disk/LRU caching. |
-| **🌐 Frontend & Web GIS** | **HTML5**, **CSS3**, **JavaScript (ES6+)**, **Leaflet.js**, **OpenStreetMap / Esri** | Interactive mapping interface, split-screen swipe comparison slider, coordinate search, dynamic heatmap rendering, and model switcher. |
-| **📊 Datasets & Benchmarks** | **SEN2VENµS Paired Dataset** (CNES/ESA/Zenodo), **Sentinel-2 MSI**, **VENµS VSSC** | Authentic 10m/5m paired satellite training data, multi-temporal revisits (Manaus, Versailles, Bordeaux, Gironde), and ground-truth validation. |
-| **🚢 Deployment & DevOps** | **Docker**, **Docker Compose**, **Windows PowerShell scripts**, `start.bat` | Containerized microservice deployment with health checks, automated local startup scripts, and offline fallback mechanisms. |
-| **📑 Automated Reporting** | **python-docx**, Markdown Artifacts | Programmatic generation of multi-page technical Word documents (`.docx`) and high-resolution visual comparison reports. |
+| Model Architecture | Checkpoint File | MSE (Lower is better) | PSNR (dB) (Higher is better) | SSIM (Higher is better) | Delta PSNR vs Bicubic (dB) | Delta SSIM vs Bicubic |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Bicubic (Baseline)** | *Interpolation reference* | 338.39 | 23.79 dB | 0.7628 | Baseline | Baseline |
+| **DCBCNN (DCB-RCAB)** | `slimdiffsr_sentinel2_2x_best.pt` | 244.79 | 25.15 dB | 0.7769 | +1.36 dB | +0.0141 |
+| **EESRGAN** | `eesrgan_sentinel2_2x_best.pt` | 246.57 | 25.05 dB | 0.7745 | +1.26 dB | +0.0117 |
+| **EDSR** | `edsr_sentinel2_2x_best.pt` | 257.87 | 24.92 dB | 0.7845 | +1.13 dB | +0.0217 |
+| **Sentinel2SRNet (Student)** | `sr_sentinel2_2x_best.pt` | 265.02 | 24.85 dB | **0.7898** | +1.06 dB | **+0.0270** |
+| **ESPCN** | `espcn_sentinel2_2x_best.pt` | 278.95 | 24.59 dB | 0.7746 | +0.80 dB | +0.0118 |
+| **FSRCNN** | `fsrcnn_sentinel2_2x.pt` | 338.20 | 23.51 dB | 0.7122 | -0.28 dB | -0.0506 |
