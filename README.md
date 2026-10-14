@@ -8,6 +8,8 @@ The project addresses a critical operational challenge: commercial high-resoluti
 
 ## Technical Approach: Teacher-Student Knowledge Distillation
 
+![Sentinel2SRNet Technical Approach Workflow](results/technical_approach_poster.png)
+
 Instead of deploying a massive model that cannot run on standard hardware, we employ a multi-teacher knowledge distillation strategy. Three specialized, high-capacity neural networks act as teachers, transferring their learned spatial features into a single compact student network.
 
 ### 1. The Three Teacher Networks
@@ -142,17 +144,16 @@ All models were evaluated on the exact same test dataset under identical conditi
 
 ## Visual Evaluation
 
-The table below presents visual comparisons between the low-resolution 10m Sentinel-2 input, the Sentinel2SRNet reconstructed output at 5m resolution, and the authentic 5m VENuS ground truth reference:
+The visual evaluation strip below compares the low-resolution 10m Sentinel-2 input against the bicubic baseline (5m), deep baseline models (FSRCNN, ESPCN, EDSR), our custom Sentinel2SRNet student model, and authentic 5m VENuS ground truth:
 
-| Low-Resolution Input (10m Sentinel-2) | Sentinel2SRNet Reconstructed Output (5m) | Ground Truth Reference (5m VENuS) |
-| :---: | :---: | :---: |
-| ![10m Input](results/visual_report_assets/sample_0_input_10m.png) | ![Sentinel2SRNet 5m Output](results/visual_report_assets/sample_0_output_sr_5m.png) | ![VENuS Ground Truth 5m](results/visual_report_assets/sample_0_expected_gt_5m.png) |
-| *Native 10m Sentinel-2 pixel grid* | *Sentinel2SRNet edge reconstruction* | *Authentic CNES VENuS optical reference* |
+![Model Benchmark Visual Comparison Strip](results/visual_evaluation_strip.png)
 
-### End-to-End Visual Workflow
-Below is the visual workflow showcasing the input Sentinel-2 tile, the bicubic baseline, the reconstructed super-resolution map, the per-pixel confidence map, and the cascaded 2.5m output:
+*Qualitative visual comparison across models: Input (Sentinel-2 10m) → Bicubic Baseline (5m) → FSRCNN → ESPCN → EDSR → Sentinel2SRNet (Ours) → Ground Truth (VENuS 5m).*
 
-![System Architecture and Visual Results](results/technical_approach_poster.png)
+### End-to-End Technical Workflow
+Below is the end-to-end scientific and operational workflow showcasing offline local benchmark evaluation, online web studio tile streaming, and defense multi-spectral intelligence pipelines:
+
+![Technical Approach and System Architecture Workflow](results/technical_approach_poster.png)
 
 ---
 
